@@ -1,7 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { HistoryCard, type HistoryItem } from "@/components/marker/history-card";
 import { StyleGlyph } from "@/components/marker/style-glyph";
@@ -37,6 +55,7 @@ import {
 } from "@/lib/qr-marker";
 import { cn } from "@/lib/utils";
 import {
+  Copy,
   Download,
   Frame,
   History,
@@ -56,6 +75,18 @@ const STYLE_OPTIONS: { value: MarkerStyle; title: string; hint: string }[] = [
   { value: "rounded", title: "Скруглённый", hint: "стиль без потери чёткости" },
   { value: "dots", title: "Точки", hint: "декоративный, для света" },
 ];
+
+/** Задание на печать: одна метка или лист со всеми метками из истории */
+interface PrintJob {
+  /** data-URL картинок меток */
+  images: string[];
+  /** Понятные подписи (название или ID) — для alt */
+  labels: string[];
+  /** Физическая ширина одной метки на бумаге, см */
+  sizeCm: number;
+  /** true — лист A4 со всеми метками сеткой 2 колонки */
+  batch: boolean;
+}
 
 function signature(it: MarkerConfig): string {
   return `${it.id}|${it.name}|${it.style}|${it.frame}|${it.showId}`;
@@ -94,11 +125,15 @@ export function MarkerStudio() {
   const [frame, setFrame] = useState(true);
   const [showId, setShowId] = useState(true);
   const [exportSize, setExportSize] = useState(1024);
+  const [printSizeCm, setPrintSizeCm] = useState(16);
   const [history, setHistory] = useState<HistoryItem[]>(() => loadHistory());
-  const [printImg, setPrintImg] = useState<string | null>(null);
+  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
+  const [printLoaded, setPrintLoaded] = useState(0);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [fontsReady, setFontsReady] = useState(false);
 
   const previewRef = useRef<HTMLCanvasElement>(null);
+  const styleGroupRef = useRef<HTMLDivElement>(null);
 
   const qr = useMemo(() => (id ? createQrData(id) : null), [id]);
 
@@ -110,6 +145,32 @@ export function MarkerStudio() {
       .then(() => setFontsReady(true))
       .catch(() => undefined);
   }, []);
+
+  /* Печать стартует, только когда все картинки задания декодированы */
+  useEffect(() => {
+    if (!printJob || printLoaded < printJob.images.length) return;
+    const t = window.setTimeout(() => window.print(), 150);
+    return () => window.clearTimeout(t);
+  }, [printJob, printLoaded]);
+
+  /* Страховка: если картинка не декодируется — печатаем через 2.5 с что есть */
+  useEffect(() => {
+    if (!printJob || printLoaded >= printJob.images.length) return;
+    const total = printJob.images.length;
+    const t = window.setTimeout(() => setPrintLoaded(total), 2500);
+    return () => window.clearTimeout(t);
+  }, [printJob, printLoaded]);
+
+  /* После закрытия диалога печати освобождаем память (data-URL) */
+  useEffect(() => {
+    if (!printJob) return;
+    const cleanup = (): void => {
+      setPrintJob(null);
+      setPrintLoaded(0);
+    };
+    window.addEventListener("afterprint", cleanup);
+    return () => window.removeEventListener("afterprint", cleanup);
+  }, [printJob]);
 
   /* Сохранение истории между сессиями */
   useEffect(() => {
@@ -138,7 +199,9 @@ export function MarkerStudio() {
     setHistory((prev) => {
       const sig = signature(config);
       const rest = prev.filter((it) => signature(it) !== sig);
-      return [{ ...config, ts: Date.now() }, ...rest].slice(0, 40);
+      // ts всегда больше предыдущего — уникальные ключи и корректное удаление
+      const ts = Math.max(Date.now(), (rest[0]?.ts ?? 0) + 1);
+      return [{ ...config, ts }, ...rest].slice(0, 40);
     });
   };
 
@@ -194,11 +257,47 @@ export function MarkerStudio() {
       notifyEmptyId();
       return;
     }
-    const url = renderMarkerDataUrl(qr, { name, id, style, frame, showId, size: 1200, dpr: 1 });
-    setPrintImg(url);
-    requestAnimationFrame(() => {
-      window.setTimeout(() => window.print(), 400);
+    const url = renderMarkerDataUrl(qr, { name, id, style, frame, showId, size: 1600, dpr: 1 });
+    setPrintLoaded(0);
+    setPrintJob({ images: [url], labels: [name.trim() || id], sizeCm: printSizeCm, batch: false });
+  };
+
+  /** Лист A4 со всеми метками из истории — сетка 2 колонки */
+  const handlePrintAll = (): void => {
+    if (history.length === 0) return;
+    const images = history.map((it) =>
+      renderMarkerDataUrl(createQrData(it.id), { ...it, size: 1100, dpr: 1 })
+    );
+    setPrintLoaded(0);
+    setPrintJob({
+      images,
+      labels: history.map((it) => it.name.trim() || it.id),
+      sizeCm: 8.5,
+      batch: true,
     });
+  };
+
+  const copyId = async (): Promise<void> => {
+    const value = id.trim();
+    if (!value) {
+      notifyEmptyId();
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      toast({
+        title: "Код скопирован",
+        description: `${value} — в буфере обмена, удобно вставить в AR-сцену.`,
+        duration: 2500,
+      });
+    } catch {
+      toast({
+        title: "Не удалось скопировать",
+        description: "Скопируйте код вручную из поля ввода.",
+        variant: "destructive",
+        duration: 3000,
+      });
+    }
   };
 
   const loadItem = (item: HistoryItem): void => {
@@ -231,12 +330,25 @@ export function MarkerStudio() {
 
   const deleteItem = (item: HistoryItem): void => {
     setHistory((prev) => prev.filter((it) => it.ts !== item.ts));
+    toast({
+      title: "Метка удалена из истории",
+      description: `«${item.name.trim() || item.id}»`,
+      duration: 5000,
+      action: (
+        <ToastAction
+          altText="Вернуть удалённую метку"
+          onClick={() => setHistory((prev) => [item, ...prev])}
+        >
+          Вернуть
+        </ToastAction>
+      ),
+    });
   };
 
   const clearHistory = (): void => {
     if (history.length === 0) return;
-    if (!window.confirm("Удалить все сохранённые метки из истории?")) return;
     setHistory([]);
+    setConfirmClear(false);
     toast({ title: "История очищена", duration: 3000 });
   };
 
@@ -244,15 +356,57 @@ export function MarkerStudio() {
     setId(value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 16));
   };
 
-  const printSheet = printImg
+  /* Стрелки влево/вправо/вверх/вниз переключают стиль — как настоящий radiogroup */
+  const handleStyleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const dir =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? 1
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (dir === 0) return;
+    e.preventDefault();
+    const idx = STYLE_OPTIONS.findIndex((o) => o.value === style);
+    const next =
+      STYLE_OPTIONS[(idx + dir + STYLE_OPTIONS.length) % STYLE_OPTIONS.length].value;
+    setStyle(next);
+    styleGroupRef.current
+      ?.querySelector<HTMLButtonElement>(`[data-style="${next}"]`)
+      ?.focus();
+  };
+
+  const markImgLoaded = (): void => setPrintLoaded((n) => n + 1);
+
+  const printSheet = printJob
     ? createPortal(
-        <div className="fixed inset-0 z-[100] hidden items-center justify-center bg-white p-10 print:flex">
-          <img
-            src={printImg}
-            alt={`Метка ${name.trim() || id} для печати`}
-            style={{ width: "16cm", height: "auto" }}
-          />
-        </div>,
+        printJob.batch ? (
+          /* Лист всех меток: обычный поток — многостраничная печать работает сама */
+          <div className="hidden bg-white print:block">
+            <div className="mx-auto grid w-fit grid-cols-2 gap-x-[1cm] gap-y-[1cm] py-[0.5cm]">
+              {printJob.images.map((url, i) => (
+                <figure key={i} className="m-0 break-inside-avoid">
+                  <img
+                    src={url}
+                    alt={`Метка ${printJob.labels[i]} для печати`}
+                    style={{ width: `${printJob.sizeCm}cm`, height: "auto" }}
+                    onLoad={markImgLoaded}
+                    onError={markImgLoaded}
+                  />
+                </figure>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="fixed inset-0 z-[100] hidden items-center justify-center bg-white print:flex">
+            <img
+              src={printJob.images[0]}
+              alt={`Метка ${printJob.labels[0]} для печати`}
+              style={{ width: `${printJob.sizeCm}cm`, height: "auto" }}
+              onLoad={markImgLoaded}
+              onError={markImgLoaded}
+            />
+          </div>
+        ),
         document.body
       )
     : null;
@@ -301,8 +455,18 @@ export function MarkerStudio() {
                   maxLength={16}
                   onChange={(e) => handleIdChange(e.target.value)}
                   placeholder="KX7M2P9Q"
-                  className="h-11 border-white/10 bg-neutral-950/70 font-mono tracking-wider text-neutral-100 placeholder:text-neutral-600 focus-visible:ring-amber-500/40"
+                  className="h-11 min-w-0 border-white/10 bg-neutral-950/70 font-mono tracking-wider text-neutral-100 placeholder:text-neutral-600 focus-visible:ring-amber-500/40"
                 />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={copyId}
+                  className="h-11 w-11 shrink-0 border-white/10 bg-transparent hover:bg-white/10 hover:text-white"
+                  title="Скопировать код метки"
+                >
+                  <Copy className="size-4" aria-hidden="true" />
+                  <span className="sr-only">Скопировать код метки</span>
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -321,8 +485,16 @@ export function MarkerStudio() {
 
             {/* Стиль модулей */}
             <div className="space-y-2">
-              <Label className="text-neutral-200">Стиль модулей</Label>
-              <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Стиль модулей">
+              <Label id="marker-style-label" className="text-neutral-200">
+                Стиль модулей
+              </Label>
+              <div
+                ref={styleGroupRef}
+                className="grid grid-cols-3 gap-2"
+                role="radiogroup"
+                aria-labelledby="marker-style-label"
+                onKeyDown={handleStyleKeyDown}
+              >
                 {STYLE_OPTIONS.map((opt) => {
                   const active = style === opt.value;
                   return (
@@ -331,6 +503,8 @@ export function MarkerStudio() {
                       type="button"
                       role="radio"
                       aria-checked={active}
+                      tabIndex={active ? 0 : -1}
+                      data-style={opt.value}
                       onClick={() => setStyle(opt.value)}
                       className={cn(
                         "flex flex-col items-center gap-2.5 rounded-lg border p-3 text-center transition-colors",
@@ -381,22 +555,49 @@ export function MarkerStudio() {
               </div>
             </div>
 
-            {/* Разрешение */}
-            <div className="space-y-2">
-              <Label className="text-neutral-200">Разрешение PNG</Label>
-              <Select value={String(exportSize)} onValueChange={(v) => setExportSize(Number(v))}>
-                <SelectTrigger
-                  className="h-11 w-full border-white/10 bg-neutral-950/70 text-neutral-100 focus-visible:ring-amber-500/40"
-                  aria-label="Разрешение PNG"
+            {/* Разрешение и размер печати */}
+            <div className="grid gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="marker-export-size" className="text-neutral-200">
+                  Разрешение PNG
+                </Label>
+                <Select value={String(exportSize)} onValueChange={(v) => setExportSize(Number(v))}>
+                  <SelectTrigger
+                    id="marker-export-size"
+                    className="h-11 w-full border-white/10 bg-neutral-950/70 text-neutral-100 focus-visible:ring-amber-500/40"
+                    aria-label="Разрешение PNG"
+                  >
+                    <SelectValue placeholder="Выберите разрешение" />
+                  </SelectTrigger>
+                  <SelectContent className="border-white/10 bg-neutral-900 text-neutral-100">
+                    <SelectItem value="512">512 px — черновик на экране</SelectItem>
+                    <SelectItem value="1024">1024 px — оптимально</SelectItem>
+                    <SelectItem value="2048">2048 px — крупная печать</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="marker-print-size" className="text-neutral-200">
+                  Размер при печати
+                </Label>
+                <Select
+                  value={String(printSizeCm)}
+                  onValueChange={(v) => setPrintSizeCm(Number(v))}
                 >
-                  <SelectValue placeholder="Выберите разрешение" />
-                </SelectTrigger>
-                <SelectContent className="border-white/10 bg-neutral-900 text-neutral-100">
-                  <SelectItem value="512">512 px — черновик на экране</SelectItem>
-                  <SelectItem value="1024">1024 px — оптимально</SelectItem>
-                  <SelectItem value="2048">2048 px — крупная печать</SelectItem>
-                </SelectContent>
-              </Select>
+                  <SelectTrigger
+                    id="marker-print-size"
+                    className="h-11 w-full border-white/10 bg-neutral-950/70 text-neutral-100 focus-visible:ring-amber-500/40"
+                    aria-label="Размер при печати"
+                  >
+                    <SelectValue placeholder="Размер метки" />
+                  </SelectTrigger>
+                  <SelectContent className="border-white/10 bg-neutral-900 text-neutral-100">
+                    <SelectItem value="10">10 см — компактные</SelectItem>
+                    <SelectItem value="13">13 см — обычные</SelectItem>
+                    <SelectItem value="16">16 см — крупные (макс. для A4)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Действия */}
@@ -502,7 +703,7 @@ export function MarkerStudio() {
 
       {/* История */}
       <section className="mt-10 lg:mt-14" aria-labelledby="history-heading">
-        <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-3">
           <div className="flex items-center gap-2.5">
             <History className="size-4 text-amber-400" aria-hidden="true" />
             <h2 id="history-heading" className="text-xl font-semibold">
@@ -513,15 +714,52 @@ export function MarkerStudio() {
             </Badge>
           </div>
           {history.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearHistory}
-              className="text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
-            >
-              <Trash2 className="size-4" aria-hidden="true" />
-              Очистить всё
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handlePrintAll}
+                title="Распечатать лист со всеми метками"
+                className="text-neutral-300 hover:bg-white/10 hover:text-white"
+              >
+                <Printer className="size-4" aria-hidden="true" />
+                Печать всех
+              </Button>
+              <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
+                  >
+                    <Trash2 className="size-4" aria-hidden="true" />
+                    Очистить
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className="border-white/10 bg-neutral-900 text-neutral-100">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="text-neutral-100">
+                      Очистить историю?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription className="text-neutral-400">
+                      Все сохранённые метки ({history.length}) пропадут из списка.
+                      Скачанные PNG-файлы это не затронет.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="border-white/10 bg-transparent text-neutral-300 hover:bg-white/10 hover:text-white">
+                      Отмена
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={clearHistory}
+                      className="bg-red-500 text-white hover:bg-red-400"
+                    >
+                      Очистить
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           )}
         </div>
 

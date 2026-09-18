@@ -155,6 +155,8 @@ export function drawMarker(canvas: HTMLCanvasElement, qr: QrData, params: DrawPa
   let displayName = nameText;
   if (hasName) {
     const maxWidth = size - margin * 2;
+    // Измеряем с тем же letter-spacing, что и при отрисовке, — иначе текст «расползается»
+    setLetterSpacing(ctx, size * 0.004);
     ctx.font = nameFont(nameSize);
     let w = ctx.measureText(displayName).width;
     while (w > maxWidth && nameSize > size * 0.034) {
@@ -162,11 +164,17 @@ export function drawMarker(canvas: HTMLCanvasElement, qr: QrData, params: DrawPa
       ctx.font = nameFont(nameSize);
       w = ctx.measureText(displayName).width;
     }
-    while (w > maxWidth && displayName.length > 2) {
-      displayName = displayName.slice(0, -1);
-      w = ctx.measureText(displayName).width;
+    if (w > maxWidth) {
+      // Обрезаем так, чтобы текст вместе с «…» гарантированно влезал в ширину
+      let base = displayName;
+      let candidate = `${base}…`;
+      while (ctx.measureText(candidate).width > maxWidth && base.length > 1) {
+        base = base.slice(0, -1);
+        candidate = `${base}…`;
+      }
+      displayName = candidate;
     }
-    if (displayName !== nameText) displayName += "…";
+    setLetterSpacing(ctx, 0);
   }
   const nameH = hasName ? nameSize * 1.55 : 0;
 

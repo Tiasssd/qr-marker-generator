@@ -65,32 +65,32 @@ export function HistoryCard({ item, onDownload, onLoad, onDelete }: HistoryCardP
         <Button
           variant="outline"
           size="sm"
-          className="h-8 border-white/10 bg-transparent text-xs text-neutral-200 hover:bg-white/10 hover:text-white"
+          className="h-8 gap-1.5 border-white/10 bg-transparent text-[11px] text-neutral-200 hover:bg-white/10 hover:text-white"
           onClick={() => onDownload(item)}
           title="Скачать PNG"
         >
           <Download className="size-3.5" aria-hidden="true" />
-          <span className="sr-only">Скачать PNG</span>
+          Скачать
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className="h-8 border-white/10 bg-transparent text-xs text-neutral-200 hover:bg-white/10 hover:text-white"
+          className="h-8 gap-1.5 border-white/10 bg-transparent text-[11px] text-neutral-200 hover:bg-white/10 hover:text-white"
           onClick={() => onLoad(item)}
           title="Загрузить в редактор"
         >
           <RotateCcw className="size-3.5" aria-hidden="true" />
-          <span className="sr-only">Загрузить в редактор</span>
+          Открыть
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className="h-8 border-white/10 bg-transparent text-xs text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
+          className="h-8 gap-1.5 border-white/10 bg-transparent text-[11px] text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
           onClick={() => onDelete(item)}
           title="Удалить из истории"
         >
           <Trash2 className="size-3.5" aria-hidden="true" />
-          <span className="sr-only">Удалить из истории</span>
+          Удалить
         </Button>
       </div>
     </article>
