@@ -1,0 +1,796 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import {
+     4→     4→  useEffect,
+     5→     5→  useMemo,
+     6→     6→  useRef,
+     7→     7→  useState,
+     8→     8→  type KeyboardEvent as ReactKeyboardEvent,
+     9→     9→} from "react";
+    10→    10→import { createPortal } from "react-dom";
+    11→    11→import {
+    12→    12→  AlertDialog,
+    13→    13→  AlertDialogAction,
+    14→    14→  AlertDialogCancel,
+    15→    15→  AlertDialogContent,
+    16→    16→  AlertDialogDescription,
+    17→    17→  AlertDialogFooter,
+    18→    18→  AlertDialogHeader,
+    19→    19→  AlertDialogTitle,
+    20→    20→  AlertDialogTrigger,
+    21→    21→} from "@/components/ui/alert-dialog";
+    22→    22→import { Badge } from "@/components/ui/badge";
+    23→    23→import { Button } from "@/components/ui/button";
+    24→    24→import {
+    25→    25→  Card,
+    26→    26→  CardAction,
+    27→    27→  CardContent,
+    28→    28→  CardDescription,
+    29→    29→  CardHeader,
+    30→    30→  CardTitle,
+    31→    31→} from "@/components/ui/card";
+    32→    32→import { Input } from "@/components/ui/input";
+    33→    33→import { Label } from "@/components/ui/label";
+    34→    34→import {
+    35→    35→  Select,
+    36→    36→  SelectContent,
+    37→    37→  SelectItem,
+    38→    38→  SelectTrigger,
+    39→    39→  SelectValue,
+    40→    40→} from "@/components/ui/select";
+    41→    41→import { Switch } from "@/components/ui/switch";
+    42→    42→import { ToastAction } from "@/components/ui/toast";
+    43→    43→import { useToast } from "@/hooks/use-toast";
+    44→    44→import { HistoryCard, type HistoryItem } from "@/components/marker/history-card";
+    45→    45→import { StyleGlyph } from "@/components/marker/style-glyph";
+    46→    46→import {
+    47→    47→  createQrData,
+    48→    48→  drawMarker,
+    49→    49→  exportMarkerPng,
+    50→    50→  generateId,
+    51→    51→  markerFileName,
+    52→    52→  renderMarkerDataUrl,
+    53→    53→  type MarkerConfig,
+    54→    54→  type MarkerStyle,
+    55→    55→} from "@/lib/qr-marker";
+    56→    56→import { cn } from "@/lib/utils";
+    57→    57→import {
+    58→    58→  Copy,
+    59→    59→  Download,
+    60→    60→  Frame,
+    61→    61→  History,
+    62→    62→  Lightbulb,
+    63→    63→  Printer,
+    64→    64→  QrCode,
+    65→    65→  RefreshCw,
+    66→    66→  Ruler,
+    67→    67→  ShieldCheck,
+    68→    68→  Trash2,
+    69→    69→} from "lucide-react";
+    70→    70→
+    71→    71→const HISTORY_KEY = "ar-marker-studio:history:v1";
+    72→    72→
+    73→    73→const STYLE_OPTIONS: { value: MarkerStyle; title: string; hint: string }[] = [
+    74→    74→  { value: "classic", title: "Строгий", hint: "максимальная надёжность" },
+    75→    75→  { value: "rounded", title: "Скруглённый", hint: "стиль без потери чёткости" },
+    76→    76→  { value: "dots", title: "Точки", hint: "декоративный, для света" },
+    77→    77→];
+    78→    78→
+    79→    79→/** Задание на печать: одна метка или лист со всеми метками из истории */
+    80→    80→interface PrintJob {
+    81→    81→  /** data-URL картинок меток */
+    82→    82→  images: string[];
+    83→    83→  /** Понятные подписи (название или ID) — для alt */
+    84→    84→  labels: string[];
+    85→    85→  /** Физическая ширина одной метки на бумаге, см */
+    86→    86→  sizeCm: number;
+    87→    87→  /** true — лист A4 со всеми метками сеткой 2 колонки */
+    88→    88→  batch: boolean;
+    89→    89→}
+    90→    90→
+    91→    91→function signature(it: MarkerConfig): string {
+    92→    92→  return `${it.id}|${it.name}|${it.style}|${it.frame}|${it.showId}`;
+    93→    93→}
+    94→    94→
+    95→    95→/* Загрузка истории из localStorage — только на клиенте (студия без SSR) */
+    96→    96→function loadHistory(): HistoryItem[] {
+    97→    97→  try {
+    98→    98→    const raw = window.localStorage.getItem(HISTORY_KEY);
+    99→    99→    if (!raw) return [];
+   100→   100→    const parsed: unknown = JSON.parse(raw);
+   101→   101→    if (!Array.isArray(parsed)) return [];
+   102→   102→    const items = parsed.filter(
+   103→   103→      (it): it is HistoryItem =>
+   104→   104→        Boolean(it) &&
+   105→   105→        typeof it === "object" &&
+   106→   106→        typeof (it as HistoryItem).id === "string" &&
+   107→   107→        (it as HistoryItem).id.length > 0 &&
+   108→   108→        typeof (it as HistoryItem).name === "string" &&
+   109→   109→        typeof (it as HistoryItem).ts === "number" &&
+   110→   110→        typeof (it as HistoryItem).frame === "boolean" &&
+   111→   111→        typeof (it as HistoryItem).showId === "boolean" &&
+   112→   112→        ["classic", "rounded", "dots"].includes((it as HistoryItem).style)
+   113→   113→    );
+   114→   114→    return items.slice(0, 40);
+   115→   115→  } catch {
+   116→   116→    return [];
+   117→   117→  }
+   118→   118→}
+   119→   119→
+   120→   120→export function MarkerStudio() {
+   121→   121→  const { toast } = useToast();
+   122→   122→  const [name, setName] = useState("");
+   123→   123→  const [id, setId] = useState(() => generateId());
+   124→   124→  const [style, setStyle] = useState<MarkerStyle>("classic");
+   125→   125→  const [frame, setFrame] = useState(true);
+   126→   126→  const [showId, setShowId] = useState(true);
+   127→   127→  const [exportSize, setExportSize] = useState(1024);
+   128→   128→  const [printSizeCm, setPrintSizeCm] = useState(16);
+   129→   129→  const [history, setHistory] = useState<HistoryItem[]>(() => loadHistory());
+   130→   130→  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
+   131→   131→  const [printLoaded, setPrintLoaded] = useState(0);
+   132→   132→  const [confirmClear, setConfirmClear] = useState(false);
+   133→   133→  const [fontsReady, setFontsReady] = useState(false);
+   134→   134→
+   135→   135→  const previewRef = useRef<HTMLCanvasElement>(null);
+   136→   136→  const styleGroupRef = useRef<HTMLDivElement>(null);
+   137→   137→
+   138→   138→  const qr = useMemo(() => (id ? createQrData(id) : null), [id]);
+   139→   139→
+   140→   140→  /* Перерисовка предпросмотра после загрузки шрифтов */
+   141→   141→  useEffect(() => {
+   142→   142→    const fonts = document.fonts;
+   143→   143→    if (!fonts) return;
+   144→   144→    fonts.ready
+   145→   145→      .then(() => setFontsReady(true))
+   146→   146→      .catch(() => undefined);
+   147→   147→  }, []);
+   148→   148→
+   149→   149→  /* Печать стартует, только когда все картинки задания декодированы */
+   150→   150→  useEffect(() => {
+   151→   151→    if (!printJob || printLoaded < printJob.images.length) return;
+   152→   152→    const t = window.setTimeout(() => window.print(), 150);
+   153→   153→    return () => window.clearTimeout(t);
+   154→   154→  }, [printJob, printLoaded]);
+   155→   155→
+   156→   156→  /* Страховка: если картинка не декодируется — печатаем через 2.5 с что есть */
+   157→   157→  useEffect(() => {
+   158→   158→    if (!printJob || printLoaded >= printJob.images.length) return;
+   159→   159→    const total = printJob.images.length;
+   160→   160→    const t = window.setTimeout(() => setPrintLoaded(total), 2500);
+   161→   161→    return () => window.clearTimeout(t);
+   162→   162→  }, [printJob, printLoaded]);
+   163→   163→
+   164→   164→  /* После закрытия диалога печати освобождаем память (data-URL) */
+   165→   165→  useEffect(() => {
+   166→   166→    if (!printJob) return;
+   167→   167→    const cleanup = (): void => {
+   168→   168→      setPrintJob(null);
+   169→   169→      setPrintLoaded(0);
+   170→   170→    };
+   171→   171→    window.addEventListener("afterprint", cleanup);
+   172→   172→    return () => window.removeEventListener("afterprint", cleanup);
+   173→   173→  }, [printJob]);
+   174→   174→
+   175→   175→  /* Сохранение истории между сессиями */
+   176→   176→  useEffect(() => {
+   177→   177→    try {
+   178→   178→      window.localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+   179→   179→    } catch {
+   180→   180→      // Хранилище недоступно — история живёт только в памяти сессии
+   181→   181→    }
+   182→   182→  }, [history]);
+   183→   183→
+   184→   184→  /* Живой предпросмотр метки */
+   185→   185→  useEffect(() => {
+   186→   186→    if (!qr || !previewRef.current) return;
+   187→   187→    drawMarker(previewRef.current, qr, {
+   188→   188→      name,
+   189→   189→      id,
+   190→   190→      style,
+   191→   191→      frame,
+   192→   192→      showId,
+   193→   193→      size: 660,
+   194→   194→      dpr: Math.min(window.devicePixelRatio || 1, 2),
+   195→   195→    });
+   196→   196→  }, [qr, name, style, frame, showId, fontsReady]);
+   197→   197→
+   198→   198→  const addToHistory = (config: MarkerConfig): void => {
+   199→   199→    setHistory((prev) => {
+   200→   200→      const sig = signature(config);
+   201→   201→      const rest = prev.filter((it) => signature(it) !== sig);
+   202→   202→      // ts всегда больше предыдущего — уникальные ключи и корректное удаление
+   203→   203→      const ts = Math.max(Date.now(), (rest[0]?.ts ?? 0) + 1);
+   204→   204→      return [{ ...config, ts }, ...rest].slice(0, 40);
+   205→   205→    });
+   206→   206→  };
+   207→   207→
+   208→   208→  const saveBlob = (blob: Blob, fileName: string): void => {
+   209→   209→    const url = URL.createObjectURL(blob);
+   210→   210→    const a = document.createElement("a");
+   211→   211→    a.href = url;
+   212→   212→    a.download = fileName;
+   213→   213→    document.body.appendChild(a);
+   214→   214→    a.click();
+   215→   215→    a.remove();
+   216→   216→    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+   217→   217→  };
+   218→   218→
+   219→   219→  const notifyEmptyId = (): void => {
+   220→   220→    toast({
+   221→   221→      title: "Код метки пуст",
+   222→   222→      description: "Введите код метки или нажмите кнопку обновления рядом с полем.",
+   223→   223→      variant: "destructive",
+   224→   224→      duration: 3500,
+   225→   225→    });
+   226→   226→  };
+   227→   227→
+   228→   228→  const handleDownload = async (): Promise<void> => {
+   229→   229→    if (!qr) {
+   230→   230→      notifyEmptyId();
+   231→   231→      return;
+   232→   232→    }
+   233→   233→    try {
+   234→   234→      const blob = await exportMarkerPng(qr, {
+   235→   235→        name,
+   236→   236→        id,
+   237→   237→        style,
+   238→   238→        frame,
+   239→   239→        showId,
+   240→   240→        size: exportSize,
+   241→   241→        dpr: 1,
+   242→   242→      });
+   243→   243→      saveBlob(blob, markerFileName(name, id));
+   244→   244→      addToHistory({ name, id, style, frame, showId });
+   245→   245→      toast({
+   246→   246→        title: "PNG сохранён",
+   247→   247→        description: `Метка «${name.trim() || id}» — ${exportSize} px по ширине.`,
+   248→   248→        duration: 3500,
+   249→   249→      });
+   250→   250→    } catch {
+   251→   251→      toast({ title: "Не удалось создать PNG", variant: "destructive", duration: 3500 });
+   252→   252→    }
+   253→   253→  };
+   254→   254→
+   255→   255→  const handlePrint = (): void => {
+   256→   256→    if (!qr) {
+   257→   257→      notifyEmptyId();
+   258→   258→      return;
+   259→   259→    }
+   260→   260→    const url = renderMarkerDataUrl(qr, { name, id, style, frame, showId, size: 1600, dpr: 1 });
+   261→   261→    setPrintLoaded(0);
+   262→   262→    setPrintJob({ images: [url], labels: [name.trim() || id], sizeCm: printSizeCm, batch: false });
+   263→   263→  };
+   264→   264→
+   265→   265→  /** Лист A4 со всеми метками из истории — сетка 2 колонки */
+   266→   266→  const handlePrintAll = (): void => {
+   267→   267→    if (history.length === 0) return;
+   268→   268→    const images = history.map((it) =>
+   269→   269→      renderMarkerDataUrl(createQrData(it.id), { ...it, size: 1100, dpr: 1 })
+   270→   270→    );
+   271→   271→    setPrintLoaded(0);
+   272→   272→    setPrintJob({
+   273→   273→      images,
+   274→   274→      labels: history.map((it) => it.name.trim() || it.id),
+   275→   275→      sizeCm: 8.5,
+   276→   276→      batch: true,
+   277→   277→    });
+   278→   278→  };
+   279→   279→
+   280→   280→  const copyId = async (): Promise<void> => {
+   281→   281→    const value = id.trim();
+   282→   282→    if (!value) {
+   283→   283→      notifyEmptyId();
+   284→   284→      return;
+   285→   285→    }
+   286→   286→    try {
+   287→   287→      await navigator.clipboard.writeText(value);
+   288→   288→      toast({
+   289→   289→        title: "Код скопирован",
+   290→   290→        description: `${value} — в буфере обмена, удобно вставить в AR-сцену.`,
+   291→   291→        duration: 2500,
+   292→   292→      });
+   293→   293→    } catch {
+   294→   294→      toast({
+   295→   295→        title: "Не удалось скопировать",
+   296→   296→        description: "Скопируйте код вручную из поля ввода.",
+   297→   297→        variant: "destructive",
+   298→   298→        duration: 3000,
+   299→   299→      });
+   300→   300→    }
+   301→   301→  };
+   302→   302→
+   303→   303→  const loadItem = (item: HistoryItem): void => {
+   304→   304→    setName(item.name);
+   305→   305→    setId(item.id);
+   306→   306→    setStyle(item.style);
+   307→   307→    setFrame(item.frame);
+   308→   308→    setShowId(item.showId);
+   309→   309→    toast({
+   310→   310→      title: "Метка загружена в редактор",
+   311→   311→      description: `«${item.name.trim() || item.id}»`,
+   312→   312→      duration: 3000,
+   313→   313→    });
+   314→   314→  };
+   315→   315→
+   316→   316→  const downloadItem = async (item: HistoryItem): Promise<void> => {
+   317→   317→    try {
+   318→   318→      const itemQr = createQrData(item.id);
+   319→   319→      const blob = await exportMarkerPng(itemQr, { ...item, size: exportSize, dpr: 1 });
+   320→   320→      saveBlob(blob, markerFileName(item.name, item.id));
+   321→   321→      toast({
+   322→   322→        title: "PNG сохранён",
+   323→   323→        description: `Метка «${item.name.trim() || item.id}».`,
+   324→   324→        duration: 3000,
+   325→   325→      });
+   326→   326→    } catch {
+   327→   327→      toast({ title: "Не удалось создать PNG", variant: "destructive", duration: 3500 });
+   328→   328→    }
+   329→   329→  };
+   330→   330→
+   331→   331→  const deleteItem = (item: HistoryItem): void => {
+   332→   332→    setHistory((prev) => prev.filter((it) => it.ts !== item.ts));
+   333→   333→    toast({
+   334→   334→      title: "Метка удалена из истории",
+   335→   335→      description: `«${item.name.trim() || item.id}»`,
+   336→   336→      duration: 5000,
+   337→   337→      action: (
+   338→   338→        <ToastAction
+   339→   339→          altText="Вернуть удалённую метку"
+   340→   340→          onClick={() => setHistory((prev) => [item, ...prev])}
+   341→   341→        >
+   342→   342→          Вернуть
+   343→   343→        </ToastAction>
+   344→   344→      ),
+   345→   345→    });
+   346→   346→  };
+   347→   347→
+   348→   348→  const clearHistory = (): void => {
+   349→   349→    if (history.length === 0) return;
+   350→   350→    setHistory([]);
+   351→   351→    setConfirmClear(false);
+   352→   352→    toast({ title: "История очищена", duration: 3000 });
+   353→   353→  };
+   354→   354→
+   355→   355→  const handleIdChange = (value: string): void => {
+   356→   356→    setId(value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 16));
+   357→   357→  };
+   358→   358→
+   359→   359→  /* Стрелки влево/вправо/вверх/вниз переключают стиль — как настоящий radiogroup */
+   360→   360→  const handleStyleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+   361→   361→    const dir =
+   362→   362→      e.key === "ArrowRight" || e.key === "ArrowDown"
+   363→   363→        ? 1
+   364→   364→        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+   365→   365→          ? -1
+   366→   366→          : 0;
+   367→   367→    if (dir === 0) return;
+   368→   368→    e.preventDefault();
+   369→   369→    const idx = STYLE_OPTIONS.findIndex((o) => o.value === style);
+   370→   370→    const next =
+   371→   371→      STYLE_OPTIONS[(idx + dir + STYLE_OPTIONS.length) % STYLE_OPTIONS.length].value;
+   372→   372→    setStyle(next);
+   373→   373→    styleGroupRef.current
+   374→   374→      ?.querySelector<HTMLButtonElement>(`[data-style="${next}"]`)
+   375→   375→      ?.focus();
+   376→   376→  };
+   377→   377→
+   378→   378→  const markImgLoaded = (): void => setPrintLoaded((n) => n + 1);
+   379→   379→
+   380→   380→  const printSheet = printJob
+   381→   381→    ? createPortal(
+   382→   382→        printJob.batch ? (
+   383→   383→          /* Лист всех меток: обычный поток — многостраничная печать работает сама */
+   384→   384→          <div className="hidden bg-white print:block">
+   385→   385→            <div className="mx-auto grid w-fit grid-cols-2 gap-x-[1cm] gap-y-[1cm] py-[0.5cm]">
+   386→   386→              {printJob.images.map((url, i) => (
+   387→   387→                <figure key={i} className="m-0 break-inside-avoid">
+   388→   388→                  <img
+   389→   389→                    src={url}
+   390→   390→                    alt={`Метка ${printJob.labels[i]} для печати`}
+   391→   391→                    style={{ width: `${printJob.sizeCm}cm`, height: "auto" }}
+   392→   392→                    onLoad={markImgLoaded}
+   393→   393→                    onError={markImgLoaded}
+   394→   394→                  />
+   395→   395→                </figure>
+   396→   396→              ))}
+   397→   397→            </div>
+   398→   398→          </div>
+   399→   399→        ) : (
+   400→   400→          <div className="fixed inset-0 z-[100] hidden items-center justify-center bg-white print:flex">
+   401→   401→            <img
+   402→   402→              src={printJob.images[0]}
+   403→   403→              alt={`Метка ${printJob.labels[0]} для печати`}
+   404→   404→              style={{ width: `${printJob.sizeCm}cm`, height: "auto" }}
+   405→   405→              onLoad={markImgLoaded}
+   406→   406→              onError={markImgLoaded}
+   407→   407→            />
+   408→   408→          </div>
+   409→   409→        ),
+   410→   410→        document.body
+   411→   411→      )
+   412→   412→    : null;
+   413→   413→
+   414→   414→  return (
+   415→   415→    <>
+   416→   416→      {printSheet}
+   417→   417→
+   418→   418→      <div className="grid items-start gap-6 lg:grid-cols-[minmax(360px,440px)_1fr] xl:gap-8">
+   419→   419→        {/* Панель параметров */}
+   420→   420→        <Card className="border-white/10 bg-neutral-900/60 backdrop-blur">
+   421→   421→          <CardHeader>
+   422→   422→            <CardTitle className="text-lg">Параметры метки</CardTitle>
+   423→   423→            <CardDescription className="text-neutral-400">
+   424→   424→              Изменения сразу видны в предпросмотре
+   425→   425→            </CardDescription>
+   426→   426→          </CardHeader>
+   427→   427→          <CardContent className="space-y-6">
+   428→   428→            {/* Название */}
+   429→   429→            <div className="space-y-2">
+   430→   430→              <Label htmlFor="marker-name" className="text-neutral-200">
+   431→   431→                Название метки
+   432→   432→              </Label>
+   433→   433→              <Input
+   434→   434→                id="marker-name"
+   435→   435→                value={name}
+   436→   436→                maxLength={36}
+   437→   437→                onChange={(e) => setName(e.target.value)}
+   438→   438→                placeholder="Например: Красная спортивная"
+   439→   439→                className="h-11 border-white/10 bg-neutral-950/70 text-neutral-100 placeholder:text-neutral-600 focus-visible:ring-amber-500/40"
+   440→   440→              />
+   441→   441→              <p className="text-xs text-neutral-500">
+   442→   442→                Печатается над QR-кодом — в скачанной картинке и на печати.
+   443→   443→              </p>
+   444→   444→            </div>
+   445→   445→
+   446→   446→            {/* Код метки */}
+   447→   447→            <div className="space-y-2">
+   448→   448→              <Label htmlFor="marker-id" className="text-neutral-200">
+   449→   449→                Код метки (ID)
+   450→   450→              </Label>
+   451→   451→              <div className="flex gap-2">
+   452→   452→                <Input
+   453→   453→                  id="marker-id"
+   454→   454→                  value={id}
+   455→   455→                  maxLength={16}
+   456→   456→                  onChange={(e) => handleIdChange(e.target.value)}
+   457→   457→                  placeholder="KX7M2P9Q"
+   458→   458→                  className="h-11 min-w-0 border-white/10 bg-neutral-950/70 font-mono tracking-wider text-neutral-100 placeholder:text-neutral-600 focus-visible:ring-amber-500/40"
+   459→   459→                />
+   460→   460→                <Button
+   461→   461→                  type="button"
+   462→   462→                  variant="outline"
+   463→   463→                  onClick={copyId}
+   464→   464→                  className="h-11 w-11 shrink-0 border-white/10 bg-transparent hover:bg-white/10 hover:text-white"
+   465→   465→                  title="Скопировать код метки"
+   466→   466→                >
+   467→   467→                  <Copy className="size-4" aria-hidden="true" />
+   468→   468→                  <span className="sr-only">Скопировать код метки</span>
+   469→   469→                </Button>
+   470→   470→                <Button
+   471→   471→                  type="button"
+   472→   472→                  variant="outline"
+   473→   473→                  onClick={() => setId(generateId())}
+   474→   474→                  className="h-11 w-11 shrink-0 border-white/10 bg-transparent hover:bg-white/10 hover:text-white"
+   475→   475→                  title="Сгенерировать новый код"
+   476→   476→                >
+   477→   477→                  <RefreshCw className="size-4" aria-hidden="true" />
+   478→   478→                  <span className="sr-only">Сгенерировать новый код</span>
+   479→   479→                </Button>
+   480→   480→              </div>
+   481→   481→              <p className="text-xs text-neutral-500">
+   482→   482→                Содержимое QR-кода — только этот ID. Никаких ссылок и адресов.
+   483→   483→              </p>
+   484→   484→            </div>
+   485→   485→
+   486→   486→            {/* Стиль модулей */}
+   487→   487→            <div className="space-y-2">
+   488→   488→              <Label id="marker-style-label" className="text-neutral-200">
+   489→   489→                Стиль модулей
+   490→   490→              </Label>
+   491→   491→              <div
+   492→   492→                ref={styleGroupRef}
+   493→   493→                className="grid grid-cols-3 gap-2"
+   494→   494→                role="radiogroup"
+   495→   495→                aria-labelledby="marker-style-label"
+   496→   496→                onKeyDown={handleStyleKeyDown}
+   497→   497→              >
+   498→   498→                {STYLE_OPTIONS.map((opt) => {
+   499→   499→                  const active = style === opt.value;
+   500→   500→                  return (
+   501→   501→                    <button
+   502→   502→                      key={opt.value}
+   503→   503→                      type="button"
+   504→   504→                      role="radio"
+   505→   505→                      aria-checked={active}
+   506→   506→                      tabIndex={active ? 0 : -1}
+   507→   507→                      data-style={opt.value}
+   508→   508→                      onClick={() => setStyle(opt.value)}
+   509→   509→                      className={cn(
+   510→   510→                        "flex flex-col items-center gap-2.5 rounded-lg border p-3 text-center transition-colors",
+   511→   511→                        active
+   512→   512→                          ? "border-amber-500/60 bg-amber-500/10"
+   513→   513→                          : "border-white/10 bg-neutral-950/40 hover:border-white/25"
+   514→   514→                      )}
+   515→   515→                    >
+   516→   516→                      <StyleGlyph style={opt.value} active={active} />
+   517→   517→                      <span>
+   518→   518→                        <span
+   519→   519→                          className={cn(
+   520→   520→                            "block text-sm font-medium",
+   521→   521→                            active ? "text-amber-300" : "text-neutral-200"
+   522→   522→                          )}
+   523→   523→                        >
+   524→   524→                          {opt.title}
+   525→   525→                        </span>
+   526→   526→                        <span className="mt-0.5 block text-[11px] leading-tight text-neutral-500">
+   527→   527→                          {opt.hint}
+   528→   528→                        </span>
+   529→   529→                      </span>
+   530→   530→                    </button>
+   531→   531→                  );
+   532→   532→                })}
+   533→   533→              </div>
+   534→   534→            </div>
+   535→   535→
+   536→   536→            {/* Переключатели */}
+   537→   537→            <div className="space-y-4 rounded-lg border border-white/10 bg-neutral-950/40 p-4">
+   538→   538→              <div className="flex items-center justify-between gap-4">
+   539→   539→                <div className="min-w-0">
+   540→   540→                  <div className="text-sm font-medium text-neutral-200">Рамка-трекер</div>
+   541→   541→                  <div className="mt-0.5 text-xs leading-snug text-neutral-500">
+   542→   542→                    Чёрный контур вокруг кода — камера быстрее находит метку в кадре
+   543→   543→                  </div>
+   544→   544→                </div>
+   545→   545→                <Switch checked={frame} onCheckedChange={setFrame} aria-label="Рамка-трекер" />
+   546→   546→              </div>
+   547→   547→              <div className="flex items-center justify-between gap-4">
+   548→   548→                <div className="min-w-0">
+   549→   549→                  <div className="text-sm font-medium text-neutral-200">Код под меткой</div>
+   550→   550→                  <div className="mt-0.5 text-xs leading-snug text-neutral-500">
+   551→   551→                    Мелкая техническая подпись с ID под QR-кодом
+   552→   552→                  </div>
+   553→   553→                </div>
+   554→   554→                <Switch checked={showId} onCheckedChange={setShowId} aria-label="Код под меткой" />
+   555→   555→              </div>
+   556→   556→            </div>
+   557→   557→
+   558→   558→            {/* Разрешение и размер печати */}
+   559→   559→            <div className="grid gap-4">
+   560→   560→              <div className="space-y-2">
+   561→   561→                <Label htmlFor="marker-export-size" className="text-neutral-200">
+   562→   562→                  Разрешение PNG
+   563→   563→                </Label>
+   564→   564→                <Select value={String(exportSize)} onValueChange={(v) => setExportSize(Number(v))}>
+   565→   565→                  <SelectTrigger
+   566→   566→                    id="marker-export-size"
+   567→   567→                    className="h-11 w-full border-white/10 bg-neutral-950/70 text-neutral-100 focus-visible:ring-amber-500/40"
+   568→   568→                    aria-label="Разрешение PNG"
+   569→   569→                  >
+   570→   570→                    <SelectValue placeholder="Выберите разрешение" />
+   571→   571→                  </SelectTrigger>
+   572→   572→                  <SelectContent className="border-white/10 bg-neutral-900 text-neutral-100">
+   573→   573→                    <SelectItem value="512">512 px — черновик на экране</SelectItem>
+   574→   574→                    <SelectItem value="1024">1024 px — оптимально</SelectItem>
+   575→   575→                    <SelectItem value="2048">2048 px — крупная печать</SelectItem>
+   576→   576→                  </SelectContent>
+   577→   577→                </Select>
+   578→   578→              </div>
+   579→   579→              <div className="space-y-2">
+   580→   580→                <Label htmlFor="marker-print-size" className="text-neutral-200">
+   581→   581→                  Размер при печати
+   582→   582→                </Label>
+   583→   583→                <Select
+   584→   584→                  value={String(printSizeCm)}
+   585→   585→                  onValueChange={(v) => setPrintSizeCm(Number(v))}
+   586→   586→                >
+   587→   587→                  <SelectTrigger
+   588→   588→                    id="marker-print-size"
+   589→   589→                    className="h-11 w-full border-white/10 bg-neutral-950/70 text-neutral-100 focus-visible:ring-amber-500/40"
+   590→   590→                    aria-label="Размер при печати"
+   591→   591→                  >
+   592→   592→                    <SelectValue placeholder="Размер метки" />
+   593→   593→                  </SelectTrigger>
+   594→   594→                  <SelectContent className="border-white/10 bg-neutral-900 text-neutral-100">
+   595→   595→                    <SelectItem value="10">10 см — компактные</SelectItem>
+   596→   596→                    <SelectItem value="13">13 см — обычные</SelectItem>
+   597→   597→                    <SelectItem value="16">16 см — крупные (макс. для A4)</SelectItem>
+   598→   598→                  </SelectContent>
+   599→   599→                </Select>
+   600→   600→              </div>
+   601→   601→            </div>
+   602→   602→
+   603→   603→            {/* Действия */}
+   604→   604→            <div className="flex flex-col gap-3 pt-1 sm:flex-row">
+   605→   605→              <Button
+   606→   606→                type="button"
+   607→   607→                onClick={handleDownload}
+   608→   608→                className="h-12 flex-1 bg-amber-500 text-base font-semibold text-neutral-950 shadow-lg shadow-amber-500/20 hover:bg-amber-400"
+   609→   609→              >
+   610→   610→                <Download className="size-5" aria-hidden="true" />
+   611→   611→                Скачать PNG
+   612→   612→              </Button>
+   613→   613→              <Button
+   614→   614→                type="button"
+   615→   615→                variant="outline"
+   616→   616→                onClick={handlePrint}
+   617→   617→                className="h-12 border-white/15 bg-transparent px-5 text-neutral-200 hover:bg-white/10 hover:text-white"
+   618→   618→              >
+   619→   619→                <Printer className="size-5" aria-hidden="true" />
+   620→   620→                Печать
+   621→   621→              </Button>
+   622→   622→            </div>
+   623→   623→          </CardContent>
+   624→   624→        </Card>
+   625→   625→
+   626→   626→        {/* Предпросмотр и советы */}
+   627→   627→        <div className="space-y-6 lg:sticky lg:top-24">
+   628→   628→          <Card className="border-white/10 bg-neutral-900/60 backdrop-blur">
+   629→   629→            <CardHeader>
+   630→   630→              <CardTitle className="text-lg">Предпросмотр</CardTitle>
+   631→   631→              <CardDescription className="text-neutral-400">
+   632→   632→                Так метка сохранится в PNG и на печати
+   633→   633→              </CardDescription>
+   634→   634→              <CardAction>
+   635→   635→                <span className="font-mono text-xs tracking-wider text-amber-400/90">
+   636→   636→                  {id || "—"}
+   637→   637→                </span>
+   638→   638→              </CardAction>
+   639→   639→            </CardHeader>
+   640→   640→            <CardContent>
+   641→   641→              <div className="mx-auto max-w-[430px] overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/50 ring-1 ring-white/10">
+   642→   642→                {qr ? (
+   643→   643→                  <canvas
+   644→   644→                    ref={previewRef}
+   645→   645→                    className="block h-auto w-full"
+   646→   646→                    aria-label="Предпросмотр метки"
+   647→   647→                  />
+   648→   648→                ) : (
+   649→   649→                  <div className="grid aspect-square place-items-center text-sm text-neutral-400">
+   650→   650→                    Введите код метки
+   651→   651→                  </div>
+   652→   652→                )}
+   653→   653→              </div>
+   654→   654→              {qr && (
+   655→   655→                <div className="mt-5 flex flex-wrap justify-center gap-2">
+   656→   656→                  <Badge variant="outline" className="border-white/15 bg-white/5 text-neutral-300">
+   657→   657→                    версия {qr.version}
+   658→   658→                  </Badge>
+   659→   659→                  <Badge variant="outline" className="border-white/15 bg-white/5 text-neutral-300">
+   660→   660→                    {qr.size}×{qr.size} модулей
+   661→   661→                  </Badge>
+   662→   662→                  <Badge variant="outline" className="border-white/15 bg-white/5 text-neutral-300">
+   663→   663→                    тихая зона 4 модуля
+   664→   664→                  </Badge>
+   665→   665→                  <Badge variant="outline" className="border-white/15 bg-white/5 text-neutral-300">
+   666→   666→                    чёрное на белом
+   667→   667→                  </Badge>
+   668→   668→                  <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-400">
+   669→   669→                    EC · H (30%)
+   670→   670→                  </Badge>
+   671→   671→                </div>
+   672→   672→              )}
+   673→   673→            </CardContent>
+   674→   674→          </Card>
+   675→   675→
+   676→   676→          <Card className="border-white/10 bg-neutral-900/60 backdrop-blur">
+   677→   677→            <CardHeader>
+   678→   678→              <CardTitle className="text-base">Уверенное распознавание при слабом свете</CardTitle>
+   679→   679→            </CardHeader>
+   680→   680→            <CardContent>
+   681→   681→              <ul className="space-y-3 text-sm text-neutral-400">
+   682→   682→                <li className="flex gap-3">
+   683→   683→                  <Ruler className="mt-0.5 size-4 shrink-0 text-amber-400" aria-hidden="true" />
+   684→   684→                  Печатайте метку не меньше 6×6 см на матовой бумаге — глянец даёт блики от подсветки.
+   685→   685→                </li>
+   686→   686→                <li className="flex gap-3">
+   687→   687→                  <ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-400" aria-hidden="true" />
+   688→   688→                  Коррекция ошибок уровня H: код читается даже при повреждении до 30% поверхности.
+   689→   689→                </li>
+   690→   690→                <li className="flex gap-3">
+   691→   691→                  <Frame className="mt-0.5 size-4 shrink-0 text-amber-400" aria-hidden="true" />
+   692→   692→                  Рамка-трекер создаёт контрастный силуэт — камере проще захватить метку целиком.
+   693→   693→                </li>
+   694→   694→                <li className="flex gap-3">
+   695→   695→                  <Lightbulb className="mt-0.5 size-4 shrink-0 text-amber-400" aria-hidden="true" />
+   696→   696→                  В темноте достаточно подсветить метку фонариком телефона с расстояния 20–30 см.
+   697→   697→                </li>
+   698→   698→              </ul>
+   699→   699→            </CardContent>
+   700→   700→          </Card>
+   701→   701→        </div>
+   702→   702→      </div>
+   703→   703→
+   704→   704→      {/* История */}
+   705→   705→      <section className="mt-10 lg:mt-14" aria-labelledby="history-heading">
+   706→   706→        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-3">
+   707→   707→          <div className="flex items-center gap-2.5">
+   708→   708→            <History className="size-4 text-amber-400" aria-hidden="true" />
+   709→   709→            <h2 id="history-heading" className="text-xl font-semibold">
+   710→   710→              История меток
+   711→   711→            </h2>
+   712→   712→            <Badge variant="secondary" className="bg-white/10 text-neutral-300">
+   713→   713→              {history.length}
+   714→   714→            </Badge>
+   715→   715→          </div>
+   716→   716→          {history.length > 0 && (
+   717→   717→            <div className="flex items-center gap-1">
+   718→   718→              <Button
+   719→   719→                variant="ghost"
+   720→   720→                size="sm"
+   721→   721→                onClick={handlePrintAll}
+   722→   722→                title="Распечатать лист со всеми метками"
+   723→   723→                className="text-neutral-300 hover:bg-white/10 hover:text-white"
+   724→   724→              >
+   725→   725→                <Printer className="size-4" aria-hidden="true" />
+   726→   726→                Печать всех
+   727→   727→              </Button>
+   728→   728→              <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+   729→   729→                <AlertDialogTrigger asChild>
+   730→   730→                  <Button
+   731→   731→                    variant="ghost"
+   732→   732→                    size="sm"
+   733→   733→                    className="text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
+   734→   734→                  >
+   735→   735→                    <Trash2 className="size-4" aria-hidden="true" />
+   736→   736→                    Очистить
+   737→   737→                  </Button>
+   738→   738→                </AlertDialogTrigger>
+   739→   739→                <AlertDialogContent className="border-white/10 bg-neutral-900 text-neutral-100">
+   740→   740→                  <AlertDialogHeader>
+   741→   741→                    <AlertDialogTitle className="text-neutral-100">
+   742→   742→                      Очистить историю?
+   743→   743→                    </AlertDialogTitle>
+   744→   744→                    <AlertDialogDescription className="text-neutral-400">
+   745→   745→                      Все сохранённые метки ({history.length}) пропадут из списка.
+   746→   746→                      Скачанные PNG-файлы это не затронет.
+   747→   747→                    </AlertDialogDescription>
+   748→   748→                  </AlertDialogHeader>
+   749→   749→                  <AlertDialogFooter>
+   750→   750→                    <AlertDialogCancel className="border-white/10 bg-transparent text-neutral-300 hover:bg-white/10 hover:text-white">
+   751→   751→                      Отмена
+   752→   752→                    </AlertDialogCancel>
+   753→   753→                    <AlertDialogAction
+   754→   754→                      onClick={clearHistory}
+   755→   755→                      className="bg-red-500 text-white hover:bg-red-400"
+   756→   756→                    >
+   757→   757→                      Очистить
+   758→   758→                    </AlertDialogAction>
+   759→   759→                  </AlertDialogFooter>
+   760→   760→                </AlertDialogContent>
+   761→   761→              </AlertDialog>
+   762→   762→            </div>
+   763→   763→          )}
+   764→   764→        </div>
+   765→   765→
+   766→   766→        {history.length === 0 ? (
+   767→   767→          <div className="rounded-xl border border-dashed border-white/15 bg-neutral-900/30 px-6 py-10 text-center">
+   768→   768→            <QrCode className="mx-auto size-8 text-neutral-600" aria-hidden="true" />
+   769→   769→            <p className="mt-3 text-sm text-neutral-400">
+   770→   770→              Здесь появятся сохранённые метки. Скачайте первую — она автоматически попадёт в историю.
+   771→   771→            </p>
+   772→   772→          </div>
+   773→   773→        ) : (
+   774→   774→          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+   775→   775→            {history.map((item) => (
+   776→   776→              <HistoryCard
+   777→   777→                key={item.ts}
+   778→   778→                item={item}
+   779→   779→                onDownload={downloadItem}
+   780→   780→                onLoad={loadItem}
+   781→   781→                onDelete={deleteItem}
+   782→   782→              />
+   783→   783→            ))}
+   784→   784→          </div>
+   785→   785→        )}
+   786→   786→      </section>
+   787→   787→
+   788→   788→      {/* Скрытая подсказка для скринридеров о назначении меток */}
+   789→   789→      <p className="sr-only">
+   790→   790→        Метки-трекеры для AR: наведите камеру на QR-код, система распознаёт ID и привязывает
+   791→   791→        к метке трёхмерную модель автомобиля.
+   792→   792→      </p>
+   793→   793→    </>
+   794→   794→  );
+   795→   795→}
+   796→   796→

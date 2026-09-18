@@ -35,9 +35,6 @@ export function HistoryCard({ item, onDownload, onLoad, onDelete }: HistoryCardP
     drawMarker(canvasRef.current, qr, {
       name: item.name,
       id: item.id,
-      style: item.style,
-      frame: item.frame,
-      showId: item.showId,
       size: 220,
       dpr: 1.5,
     });
@@ -50,12 +47,12 @@ export function HistoryCard({ item, onDownload, onLoad, onDelete }: HistoryCardP
           <canvas
             ref={canvasRef}
             className="block h-auto w-full"
-            aria-label={`Мини-превью метки ${item.name || item.id}`}
+            aria-label={`Мини-превью метки ${item.name}`}
           />
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-neutral-100" title={item.name}>
-            {item.name.trim() || "Без названия"}
+            {item.name}
           </div>
           <div className="mt-1 font-mono text-xs tracking-wider text-amber-400/90">{item.id}</div>
           <div className="mt-1 text-xs text-neutral-500">{formatDate(item.ts)}</div>

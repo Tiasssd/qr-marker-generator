@@ -1,19 +1,11 @@
 import QRCode from "qrcode";
 
-/** Стиль отрисовки модулей QR-кода */
-export type MarkerStyle = "classic" | "rounded" | "dots";
-
 /** Конфигурация метки (то, что влияет на итоговую картинку) */
 export interface MarkerConfig {
-  /** Название метки — печатается над QR-кодом */
+  /** Название метки — печатается над QR-кодом и определяет уникальный узор */
   name: string;
-  /** Уникальный код метки — содержимое QR (никаких ссылок) */
+  /** Код метки, выведенный из названия — содержимое QR (никаких ссылок) */
   id: string;
-  style: MarkerStyle;
-  /** Чёрная рамка-трекер вокруг кода */
-  frame: boolean;
-  /** Мелкая подпись с ID под QR-кодом */
-  showId: boolean;
 }
 
 /** Параметры отрисовки на canvas */
@@ -26,7 +18,7 @@ export interface DrawParams extends MarkerConfig {
 
 /** Матрица QR-кода */
 export interface QrData {
-  /** Число модулей по стороне (например, 25 для версии 2) */
+  /** Число модулей по стороне (21 для версии 1 — максимально крупные квадраты) */
   size: number;
   version: number;
   isDark(row: number, col: number): boolean;
@@ -39,7 +31,7 @@ interface BitMatrixLike {
 
 /**
  * Создаёт QR-матрицу с максимальной коррекцией ошибок (H = 30%).
- * Внутри кода — только переданный ID, никаких ссылок.
+ * Внутри кода — только ID метки, никаких ссылок.
  */
 export function createQrData(content: string): QrData {
   const qr = QRCode.create(content, { errorCorrectionLevel: "H" });
@@ -51,26 +43,41 @@ export function createQrData(content: string): QrData {
   };
 }
 
-const ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+/* --------------------------- ID из названия ------------------------------ */
+
+const ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 32 знака, без похожих
+
+/** FNV-1a 32 бит с настраиваемым сидом */
+function fnv1a(bytes: Uint8Array, seed: number): number {
+  let h = seed >>> 0;
+  for (let i = 0; i < bytes.length; i++) {
+    h ^= bytes[i];
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
 
 /**
- * Генерирует уникальный код метки: 8 знаков без похожих символов
- * (без O/0, I/1), чтобы код легко читался и набирался вручную.
+ * Выводит уникальный код метки из названия (детерминированно):
+ * одинаковое название — одинаковый узор (можно перепечатать),
+ * разное название — другой узор (камера различит машины с одного взгляда).
+ * 10 знаков алфавита из 32 символов → QR остаётся версией 1 (21×21) с EC H.
  */
-export function generateId(length = 8): string {
-  const bytes = new Uint8Array(length);
-  globalThis.crypto.getRandomValues(bytes);
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
-  }
-  return out;
+export function deriveId(name: string, length = 10): string {
+  const norm = name.trim().replace(/\s+/g, " ").toLowerCase();
+  if (!norm) return "";
+  const bytes = new TextEncoder().encode(norm);
+  const h1 = fnv1a(bytes, 0x811c9dc5);
+  const h2 = fnv1a(bytes, 0x9dc5811c);
+  let id = "";
+  for (let i = 0; i < 6 && i < length; i++) id += ID_ALPHABET[(h1 >>> (i * 5)) & 31];
+  for (let i = 0; i < 4 && 6 + i < length; i++) id += ID_ALPHABET[(h2 >>> (i * 5)) & 31];
+  return id;
 }
 
 /* ---------- Шрифты: берём реальное семейство из CSS-переменных ---------- */
 
 let cachedSans: string | null = null;
-let cachedMono: string | null = null;
 
 function resolveFamily(cssVar: string, fallback: string): string {
   if (typeof document === "undefined") return fallback;
@@ -90,11 +97,6 @@ function resolveFamily(cssVar: string, fallback: string): string {
 export function sansStack(): string {
   cachedSans ??= resolveFamily("--font-geist-sans", "Arial, sans-serif");
   return `${cachedSans}, Arial, sans-serif`;
-}
-
-export function monoStack(): string {
-  cachedMono ??= resolveFamily("--font-geist-mono", "ui-monospace, Consolas, monospace");
-  return `${cachedMono}, ui-monospace, Consolas, monospace`;
 }
 
 /* ---------------------------- Вспомогательные ---------------------------- */
@@ -132,40 +134,40 @@ function pathRoundRect(
 /* ------------------------------ Отрисовка -------------------------------- */
 
 /**
- * Рисует карточку метки на canvas:
- *   [название]  [рамка-трекер + QR + тихая зона]  [ID (опция)]
- * Чистый чёрный на белом — максимум контраста для камеры.
+ * Рисует карточку метки на canvas: [название] [рамка-трекер + QR + тихая зона].
+ * Чистый чёрный на белом, модули во всю клетку — максимально крупные квадраты
+ * для уверенного визуального различения камерой.
  */
 export function drawMarker(canvas: HTMLCanvasElement, qr: QrData, params: DrawParams): void {
-  const { name, id, style, frame, showId } = params;
+  const { name, id } = params;
   const size = params.size;
   const dpr = params.dpr ?? 1;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  void id;
 
-  const margin = size * 0.055;
-  const gap = size * 0.048;
+  /* Компактная вёрстка: тонкие поля, рамка тоньше — модули крупнее */
+  const margin = size * 0.025;
+  const gap = size * 0.03;
   const nameText = name.trim();
   const hasName = nameText.length > 0;
 
   /* --- подбор размера шрифта названия --- */
   const sans = sansStack();
   const nameFont = (px: number) => `700 ${px}px ${sans}`;
-  let nameSize = size * 0.072;
+  let nameSize = size * 0.062;
   let displayName = nameText;
   if (hasName) {
     const maxWidth = size - margin * 2;
-    // Измеряем с тем же letter-spacing, что и при отрисовке, — иначе текст «расползается»
     setLetterSpacing(ctx, size * 0.004);
     ctx.font = nameFont(nameSize);
     let w = ctx.measureText(displayName).width;
-    while (w > maxWidth && nameSize > size * 0.034) {
-      nameSize -= size * 0.003;
+    while (w > maxWidth && nameSize > size * 0.03) {
+      nameSize -= size * 0.0025;
       ctx.font = nameFont(nameSize);
       w = ctx.measureText(displayName).width;
     }
     if (w > maxWidth) {
-      // Обрезаем так, чтобы текст вместе с «…» гарантированно влезал в ширину
       let base = displayName;
       let candidate = `${base}…`;
       while (ctx.measureText(candidate).width > maxWidth && base.length > 1) {
@@ -176,22 +178,20 @@ export function drawMarker(canvas: HTMLCanvasElement, qr: QrData, params: DrawPa
     }
     setLetterSpacing(ctx, 0);
   }
-  const nameH = hasName ? nameSize * 1.55 : 0;
+  const nameH = hasName ? nameSize * 1.35 : 0;
 
   /* --- размеры холста --- */
   const qrSide = size - 2 * margin;
-  const idSize = size * 0.031;
-  const idH = showId ? idSize * 2.1 : 0;
-  const height =
-    margin + nameH + gap + qrSide + (showId ? gap * 0.75 + idH : 0) + margin;
+  const height = margin + nameH + gap + qrSide + margin;
 
   canvas.width = Math.round(size * dpr);
   canvas.height = Math.round(height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Белый фон — максимально светлая поверхность для тёмных модулей
+  // Белый фон — максимально светлая поверхность для тёмных модулей.
+  // Заливаем с запасом: дробная высота холста иначе оставляет полупрозрачный нижний ряд.
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, size, height);
+  ctx.fillRect(-2, -2, size + 4, height + 4);
 
   /* --- название над кодом --- */
   if (hasName) {
@@ -208,24 +208,22 @@ export function drawMarker(canvas: HTMLCanvasElement, qr: QrData, params: DrawPa
   const qx = margin;
   const qy = margin + nameH + gap;
   const n = qr.size;
-  const frameT = frame ? qrSide * 0.042 : 0;
+  const frameT = qrSide * 0.026;
   const inner = qrSide - 2 * frameT;
   const quiet = 4; // тихая зона: 4 модуля с каждой стороны (по стандарту)
   const cell = inner / (n + 2 * quiet);
   const ox = qx + frameT + quiet * cell;
   const oy = qy + frameT + quiet * cell;
 
-  if (frame) {
-    const outerR = qrSide * 0.055;
-    ctx.fillStyle = "#000000";
-    pathRoundRect(ctx, qx, qy, qrSide, qrSide, outerR);
-    ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    pathRoundRect(ctx, qx + frameT, qy + frameT, inner, inner, Math.max(outerR - frameT * 0.5, 0));
-    ctx.fill();
-  }
+  const outerR = qrSide * 0.04;
+  ctx.fillStyle = "#000000";
+  pathRoundRect(ctx, qx, qy, qrSide, qrSide, outerR);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  pathRoundRect(ctx, qx + frameT, qy + frameT, inner, inner, Math.max(outerR - frameT * 0.4, 0));
+  ctx.fill();
 
-  /* --- модули данных --- */
+  /* --- модули данных: сплошные квадраты во всю клетку --- */
   ctx.fillStyle = "#000000";
   const inFinder = (r: number, c: number): boolean =>
     (r < 7 && c < 7) || (r < 7 && c >= n - 7) || (r >= n - 7 && c < 7);
@@ -235,18 +233,7 @@ export function drawMarker(canvas: HTMLCanvasElement, qr: QrData, params: DrawPa
     for (let c = 0; c < n; c++) {
       if (inFinder(r, c)) continue;
       if (!qr.isDark(r, c)) continue;
-      const x = ox + c * cell;
-      const y = oy + r * cell;
-      if (style === "classic") {
-        ctx.fillRect(x, y, cell + pad, cell + pad);
-      } else if (style === "rounded") {
-        pathRoundRect(ctx, x, y, cell + pad, cell + pad, cell * 0.28);
-        ctx.fill();
-      } else {
-        ctx.beginPath();
-        ctx.arc(x + cell / 2, y + cell / 2, cell * 0.48, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      ctx.fillRect(ox + c * cell, oy + r * cell, cell + pad, cell + pad);
     }
   }
 
@@ -255,45 +242,16 @@ export function drawMarker(canvas: HTMLCanvasElement, qr: QrData, params: DrawPa
     const x = ox + col * cell;
     const y = oy + row * cell;
     const s = cell * 7;
-    if (style === "classic") {
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(x, y, s, s);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(x + cell, y + cell, cell * 5, cell * 5);
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(x + cell * 2, y + cell * 2, cell * 3, cell * 3);
-      return;
-    }
     ctx.fillStyle = "#000000";
-    pathRoundRect(ctx, x, y, s, s, style === "dots" ? s * 0.5 : s * 0.3);
-    ctx.fill();
+    ctx.fillRect(x, y, s, s);
     ctx.fillStyle = "#ffffff";
-    pathRoundRect(ctx, x + cell, y + cell, cell * 5, cell * 5, style === "dots" ? cell * 2 : cell * 1.1);
-    ctx.fill();
+    ctx.fillRect(x + cell, y + cell, cell * 5, cell * 5);
     ctx.fillStyle = "#000000";
-    if (style === "dots") {
-      ctx.beginPath();
-      ctx.arc(x + s / 2, y + s / 2, cell * 1.45, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      pathRoundRect(ctx, x + cell * 2, y + cell * 2, cell * 3, cell * 3, cell * 1.05);
-      ctx.fill();
-    }
+    ctx.fillRect(x + cell * 2, y + cell * 2, cell * 3, cell * 3);
   };
   drawEye(0, 0);
   drawEye(n - 7, 0);
   drawEye(0, n - 7);
-
-  /* --- ID под кодом --- */
-  if (showId) {
-    ctx.fillStyle = "#6f6f76";
-    ctx.font = `500 ${idSize}px ${monoStack()}`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    setLetterSpacing(ctx, idSize * 0.28);
-    ctx.fillText(id, size / 2, qy + qrSide + gap * 0.75);
-    setLetterSpacing(ctx, 0);
-  }
 }
 
 /* ------------------------------- Экспорт --------------------------------- */
