@@ -55,11 +55,11 @@ export function HistoryCard({ item, index = 0, onDownload, onLoad, onDelete }: H
 
   return (
     <article
-      className="anim-rise group rounded-xl border border-white/10 bg-neutral-900/60 p-3 transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:shadow-lg hover:shadow-black/30"
+      className="anim-rise group rounded-[24px] border border-stone-200/80 bg-white p-4 shadow-soft-sm transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-stone-300/90 hover:shadow-soft"
       style={{ animationDelay: `${Math.min(index * 50, 350)}ms` }}
     >
-      <div className="flex gap-3">
-        <div className="w-[92px] shrink-0 overflow-hidden rounded-lg bg-white ring-1 ring-black/10 transition-transform duration-200 group-hover:scale-[1.03]">
+      <div className="flex gap-3.5">
+        <div className="w-[92px] shrink-0 overflow-hidden rounded-2xl bg-white ring-1 ring-stone-200/90 transition-transform duration-200 group-hover:scale-[1.03]">
           <canvas
             ref={canvasRef}
             className="block h-auto w-full"
@@ -67,7 +67,7 @@ export function HistoryCard({ item, index = 0, onDownload, onLoad, onDelete }: H
           />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-neutral-100" title={item.name}>
+          <div className="truncate text-sm font-medium text-stone-900" title={item.name}>
             {item.name}
           </div>
           <div className="mt-1">
@@ -76,20 +76,20 @@ export function HistoryCard({ item, index = 0, onDownload, onLoad, onDelete }: H
               onClick={() => void copyId()}
               title="Скопировать ID"
               aria-label={`Скопировать ID ${item.id}`}
-              className="-mx-1 inline-flex items-center gap-1 rounded px-1 py-0.5 font-mono text-xs tracking-wider text-amber-400/90 transition-colors hover:bg-amber-500/10 hover:text-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+              className="-mx-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-xs tracking-wider text-orange-700 transition-colors hover:bg-orange-50 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/60"
             >
               {item.id}
               <Copy className="size-3 opacity-60" aria-hidden="true" />
             </button>
           </div>
-          <div className="mt-1 text-xs text-neutral-400">{formatDate(item.ts)}</div>
+          <div className="mt-1 text-xs text-stone-500">{formatDate(item.ts)}</div>
         </div>
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-1.5 opacity-70 transition-opacity group-hover:opacity-100">
+      <div className="mt-3.5 grid grid-cols-3 gap-1.5">
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1.5 border-white/10 bg-transparent text-[11px] text-neutral-200 hover:bg-white/10 hover:text-white"
+          className="h-9 gap-1.5 rounded-full border-transparent bg-stone-100 text-xs text-stone-600 hover:bg-stone-200 hover:text-stone-900"
           onClick={() => onDownload(item)}
           title="Скачать PNG"
         >
@@ -99,7 +99,7 @@ export function HistoryCard({ item, index = 0, onDownload, onLoad, onDelete }: H
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1.5 border-white/10 bg-transparent text-[11px] text-neutral-200 hover:bg-white/10 hover:text-white"
+          className="h-9 gap-1.5 rounded-full border-transparent bg-stone-100 text-xs text-stone-600 hover:bg-stone-200 hover:text-stone-900"
           onClick={() => onLoad(item)}
           title="Загрузить в редактор"
         >
@@ -109,7 +109,7 @@ export function HistoryCard({ item, index = 0, onDownload, onLoad, onDelete }: H
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1.5 border-white/10 bg-transparent text-[11px] text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
+          className="h-9 gap-1.5 rounded-full border-transparent bg-stone-100 text-xs text-stone-600 hover:bg-stone-200 hover:text-stone-900"
           onClick={() => onDelete(item)}
           title="Удалить из истории"
         >

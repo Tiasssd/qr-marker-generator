@@ -192,8 +192,9 @@ export function MarkerStudio() {
     const mq = window.matchMedia("(max-width: 1023px)");
     const apply = (): void => {
       const bar = document.querySelector<HTMLElement>(".marker-sticky-bar");
+      /* плавающая капсула с отступом снизу — берём высоту + зазор */
       document.body.style.paddingBottom =
-        mq.matches && bar ? `${bar.offsetHeight + 1}px` : "";
+        mq.matches && bar ? `${bar.offsetHeight + 20}px` : "";
     };
     apply();
     mq.addEventListener("change", apply);
@@ -393,12 +394,12 @@ export function MarkerStudio() {
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(320px,400px)_1fr]">
         {/* Панель метки */}
-        <Card className="anim-rise border-white/10 bg-neutral-900/60 backdrop-blur">
-          <CardContent className="space-y-5 pt-6">
+        <Card className="anim-rise rounded-[28px] border-stone-200/80 bg-white shadow-soft">
+          <CardContent className="space-y-6">
             {/* Название — единственный ввод: задаёт и подпись, и уникальный узор */}
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="marker-name" className="text-neutral-200">
+                <Label htmlFor="marker-name" className="text-sm font-medium text-stone-700">
                   Название метки
                 </Label>
                 {/* Счётчик виден только у самого лимита — не захламляет обычный ввод */}
@@ -406,7 +407,7 @@ export function MarkerStudio() {
                   <span
                     aria-live="polite"
                     className={`font-mono text-xs tabular-nums ${
-                      name.length >= 58 ? "text-amber-400" : "text-neutral-400"
+                      name.length >= 58 ? "text-orange-600" : "text-stone-400"
                     }`}
                   >
                     {name.length} / 60
@@ -424,7 +425,7 @@ export function MarkerStudio() {
                     if (e.key === "Enter") void handleDownload();
                   }}
                   placeholder="Например: Красная спортивная"
-                  className="h-12 border-white/10 bg-neutral-950/70 pr-11 caret-amber-400 text-neutral-100 placeholder:text-neutral-600 focus-visible:ring-amber-500/40"
+                  className="h-14 rounded-2xl border-stone-200 bg-stone-50/80 pr-12 text-[15px] text-stone-900 caret-orange-600 placeholder:text-stone-400 focus-visible:border-stone-300 focus-visible:ring-stone-400/25"
                 />
                 {name.length > 0 && (
                   <button
@@ -434,12 +435,15 @@ export function MarkerStudio() {
                       nameInputRef.current?.focus();
                     }}
                     aria-label="Очистить название"
-                    className="absolute inset-y-0 right-3 my-auto grid size-7 place-items-center rounded-md text-neutral-400 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+                    className="absolute inset-y-0 right-3 my-auto grid size-7 place-items-center rounded-full text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50"
                   >
                     <X className="size-4" aria-hidden="true" />
                   </button>
                 )}
               </div>
+              <p className="text-xs text-stone-500">
+                Название печатается над меткой и задаёт её уникальный узор
+              </p>
             </div>
 
             {/* Действия */}
@@ -448,7 +452,7 @@ export function MarkerStudio() {
                 type="button"
                 onClick={handleDownload}
                 disabled={downloadDisabled}
-                className="h-12 flex-1 bg-amber-500 text-base font-semibold text-neutral-950 shadow-lg shadow-amber-500/20 hover:bg-amber-400 disabled:pointer-events-none disabled:opacity-40"
+                className="h-12 flex-1 rounded-full bg-stone-900 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
               >
                 <Download className="size-5" aria-hidden="true" />
                 Скачать PNG
@@ -458,7 +462,7 @@ export function MarkerStudio() {
                 variant="outline"
                 onClick={handlePrint}
                 disabled={downloadDisabled}
-                className="h-12 border-white/15 bg-transparent px-5 text-neutral-200 hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-40"
+                className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
               >
                 <Printer className="size-5" aria-hidden="true" />
                 Печать
@@ -467,26 +471,25 @@ export function MarkerStudio() {
 
             {/* Размер печати */}
             <div className="space-y-2">
-              <Label htmlFor="marker-print-size" className="text-neutral-200">
+              <Label htmlFor="marker-print-size" className="text-sm font-medium text-stone-700">
                 Размер при печати
               </Label>
               <ToggleGroup
                 id="marker-print-size"
                 type="single"
-                variant="outline"
                 value={String(printSizeCm)}
                 onValueChange={(v) => {
                   if (v) setPrintSizeCm(Number(v));
                 }}
                 aria-label="Размер при печати"
-                className="h-11 w-full"
+                className="h-12 w-full gap-1 rounded-full border border-stone-200/80 bg-stone-100/70 p-1 shadow-none"
               >
                 {[10, 13, 16].map((cm) => (
                   <ToggleGroupItem
                     key={cm}
                     value={String(cm)}
                     aria-label={`${cm} сантиметров`}
-                    className="h-11 flex-1 border-white/15 bg-neutral-950/70 px-2 text-sm text-neutral-300 transition-colors hover:bg-white/10 hover:text-white data-[state=on]:border-amber-500/40 data-[state=on]:bg-amber-500/15 data-[state=on]:text-amber-300 data-[state=on]:hover:bg-amber-500/20 focus-visible:ring-amber-500/40"
+                    className="h-10 flex-1 rounded-full border-0 bg-transparent px-2 text-sm font-medium text-stone-500 shadow-none transition-colors hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white"
                   >
                     {cm} см
                   </ToggleGroupItem>
@@ -498,9 +501,9 @@ export function MarkerStudio() {
 
         {/* Предпросмотр */}
         <div className="anim-rise anim-rise-delay-1 lg:sticky lg:top-24">
-          <Card className="border-white/10 bg-neutral-900/60 backdrop-blur">
+          <Card className="rounded-[28px] border-stone-200/80 bg-white shadow-soft">
             <CardHeader>
-              <CardTitle className="text-lg text-neutral-100">Предпросмотр</CardTitle>
+              <CardTitle className="text-[17px] font-semibold tracking-tight text-stone-900">Предпросмотр</CardTitle>
               <CardAction>
                 {id ? (
                   <button
@@ -508,41 +511,43 @@ export function MarkerStudio() {
                     onClick={() => void copyId(id)}
                     title="Скопировать ID"
                     aria-label={`Скопировать ID ${id}`}
-                    className="-mx-1 inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 font-mono text-xs tracking-wider text-amber-400/90 transition-colors hover:bg-amber-500/10 hover:text-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+                    className="-mx-1 inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-mono text-xs tracking-wider text-orange-700 transition-colors hover:bg-orange-50 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/60"
                   >
                     {id}
                     <Copy className="size-3.5 opacity-60" aria-hidden="true" />
                   </button>
                 ) : (
-                  <span className="font-mono text-xs tracking-wider text-amber-400/90">—</span>
+                  <span className="font-mono text-xs tracking-wider text-stone-400">—</span>
                 )}
               </CardAction>
             </CardHeader>
             <CardContent>
               {design ? (
-                <button
-                  type="button"
-                  onClick={() => setZoomOpen(true)}
-                  title="Открыть метку крупно"
-                  aria-label="Открыть метку крупно"
-                  className="anim-paper group/zoom relative mx-auto block max-w-[440px] cursor-zoom-in overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/50 ring-1 ring-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
-                >
-                  <canvas
-                    ref={previewRef}
-                    className="block h-auto w-full"
-                    aria-label="Предпросмотр метки"
-                  />
-                  {/* Подсказка зума: появляется при наведении */}
-                  <span className="pointer-events-none absolute right-3 top-3 grid size-8 place-items-center rounded-full bg-neutral-950/70 text-white opacity-0 transition-opacity duration-200 group-hover/zoom:opacity-100">
-                    <Maximize2 className="size-4" aria-hidden="true" />
-                  </span>
-                </button>
+                <div className="mx-auto max-w-[480px] rounded-[24px] bg-stone-100/80 p-5">
+                  <button
+                    type="button"
+                    onClick={() => setZoomOpen(true)}
+                    title="Открыть метку крупно"
+                    aria-label="Открыть метку крупно"
+                    className="anim-paper group/zoom relative mx-auto block w-full cursor-zoom-in overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90 transition-shadow duration-300 hover:shadow-soft-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
+                  >
+                    <canvas
+                      ref={previewRef}
+                      className="block h-auto w-full"
+                      aria-label="Предпросмотр метки"
+                    />
+                    {/* Подсказка зума: появляется при наведении */}
+                    <span className="pointer-events-none absolute right-3 top-3 grid size-8 place-items-center rounded-full bg-white/85 text-stone-700 opacity-0 shadow-soft-sm backdrop-blur-sm transition-opacity duration-200 group-hover/zoom:opacity-100">
+                      <Maximize2 className="size-4" aria-hidden="true" />
+                    </span>
+                  </button>
+                </div>
               ) : (
                 /* Пустое состояние: рамка-заготовка вместо пустой белой бумаги */
-                <div className="mx-auto grid aspect-square max-w-[440px] place-items-center rounded-xl border-2 border-dashed border-white/15 bg-neutral-900/30 px-6 text-center">
+                <div className="mx-auto grid aspect-square max-w-[480px] place-items-center rounded-[24px] border-2 border-dashed border-stone-300/80 bg-stone-100/60 px-6 text-center">
                   <div>
-                    <ScanLine className="mx-auto size-10 text-neutral-500" aria-hidden="true" />
-                    <p className="mt-3 text-sm text-neutral-400">
+                    <ScanLine className="mx-auto size-10 text-stone-400" aria-hidden="true" />
+                    <p className="mt-3 text-sm text-stone-500">
                       Введите название — здесь появится метка
                     </p>
                   </div>
@@ -554,14 +559,14 @@ export function MarkerStudio() {
       </div>
 
       {/* История */}
-      <section className="anim-rise anim-rise-delay-2 mt-10" aria-labelledby="history-heading">
+      <section className="anim-rise anim-rise-delay-2 mt-12 lg:mt-14" aria-labelledby="history-heading">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-3">
           <div className="flex items-center gap-2.5">
-            <History className="size-4 text-amber-400" aria-hidden="true" />
-            <h2 id="history-heading" className="text-xl font-semibold">
+            <History className="size-4 text-stone-400" aria-hidden="true" />
+            <h2 id="history-heading" className="text-xl font-semibold tracking-tight text-stone-900">
               История меток
             </h2>
-            <Badge variant="secondary" className="bg-white/10 text-neutral-300">
+            <Badge variant="secondary" className="bg-stone-100 text-stone-600 tabular-nums">
               {history.length}
             </Badge>
           </div>
@@ -572,7 +577,7 @@ export function MarkerStudio() {
                 size="sm"
                 onClick={handlePrintAll}
                 title="Распечатать лист со всеми метками"
-                className="text-neutral-300 hover:bg-white/10 hover:text-white"
+                className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700"
               >
                 <Printer className="size-4" aria-hidden="true" />
                 Печать всех
@@ -582,29 +587,29 @@ export function MarkerStudio() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-neutral-400 hover:bg-red-500/10 hover:text-red-400"
+                    className="rounded-full text-stone-500 hover:bg-red-50 hover:text-red-600"
                   >
                     <Trash2 className="size-4" aria-hidden="true" />
                     Очистить
                   </Button>
                 </AlertDialogTrigger>
-                <AlertDialogContent className="border-white/10 bg-neutral-900 text-neutral-100">
+                <AlertDialogContent className="rounded-[24px] border-stone-200/80 bg-white text-stone-900 shadow-soft">
                   <AlertDialogHeader>
-                    <AlertDialogTitle className="text-neutral-100">
+                    <AlertDialogTitle className="text-stone-900">
                       Очистить историю?
                     </AlertDialogTitle>
-                    <AlertDialogDescription className="text-neutral-400">
+                    <AlertDialogDescription className="text-stone-500">
                       Все сохранённые метки ({history.length}) пропадут из списка.
                       Скачанные PNG-файлы это не затронет.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel className="border-white/10 bg-transparent text-neutral-300 hover:bg-white/10 hover:text-white">
+                    <AlertDialogCancel className="rounded-full border-transparent bg-stone-100 text-stone-700 hover:bg-stone-200 hover:text-stone-900">
                       Отмена
                     </AlertDialogCancel>
                     <AlertDialogAction
                       onClick={clearHistory}
-                      className="bg-red-500 text-white hover:bg-red-400"
+                      className="rounded-full bg-red-600 text-white hover:bg-red-500"
                     >
                       Очистить
                     </AlertDialogAction>
@@ -616,9 +621,9 @@ export function MarkerStudio() {
         </div>
 
         {history.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/15 bg-neutral-900/30 px-6 py-8 text-center">
-            <Shapes className="mx-auto size-8 text-neutral-600" aria-hidden="true" />
-            <p className="mt-3 text-sm text-neutral-400">
+          <div className="rounded-[24px] border border-dashed border-stone-300/80 bg-white/60 px-6 py-8 text-center">
+            <Shapes className="mx-auto size-8 text-stone-300" aria-hidden="true" />
+            <p className="mt-3 text-sm text-stone-500">
               Скачайте первую метку — она появится здесь.
             </p>
           </div>
@@ -640,18 +645,18 @@ export function MarkerStudio() {
 
       {/* Мобильная липкая панель: скачать, не прокручивая наверх */}
       {design && (
-        <div className="marker-sticky-bar fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-neutral-950/90 pb-[env(safe-area-inset-bottom)] backdrop-blur print:hidden lg:hidden">
-          <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
+        <div className="marker-sticky-bar fixed inset-x-3 bottom-3 z-30 rounded-[24px] border border-stone-200/80 bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-soft-lg backdrop-blur-md print:hidden lg:hidden">
+          <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-neutral-100" title={name}>
+              <div className="truncate text-sm font-medium text-stone-900" title={name}>
                 {name}
               </div>
-              <div className="font-mono text-xs tracking-wider text-amber-400/90">{id}</div>
+              <div className="font-mono text-xs tracking-wider text-orange-700">{id}</div>
             </div>
             <Button
               type="button"
               onClick={handleDownload}
-              className="h-11 shrink-0 bg-amber-500 px-5 font-semibold text-neutral-950 shadow-lg shadow-amber-500/20 hover:bg-amber-400"
+              className="h-11 shrink-0 rounded-full bg-stone-900 px-5 font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 active:scale-[0.98]"
             >
               <Download className="size-5" aria-hidden="true" />
               Скачать
@@ -662,24 +667,26 @@ export function MarkerStudio() {
 
       {/* Крупный просмотр метки */}
       <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
-        <DialogContent className="max-w-[min(92vw,720px)] border-white/10 bg-neutral-900 p-4 sm:p-6">
+        <DialogContent className="max-w-[min(92vw,720px)] rounded-[28px] border-stone-200/80 bg-white p-4 shadow-soft sm:p-6">
           <DialogHeader className="sr-only">
             <DialogTitle>Метка крупно</DialogTitle>
             <DialogDescription>Увеличенный предпросмотр метки</DialogDescription>
           </DialogHeader>
-          <div className="mx-auto w-full max-w-[640px] overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/50">
-            <canvas
-              ref={drawZoom}
-              className="block h-auto w-full"
-              aria-label="Увеличенный предпросмотр метки"
-            />
+          <div className="mx-auto w-full max-w-[640px] rounded-[24px] bg-stone-100/80 p-4 sm:p-5">
+            <div className="overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90">
+              <canvas
+                ref={drawZoom}
+                className="block h-auto w-full"
+                aria-label="Увеличенный предпросмотр метки"
+              />
+            </div>
           </div>
           <DialogFooter className="mt-1 sm:justify-center">
             <Button
               type="button"
               onClick={handleDownload}
               disabled={downloadDisabled}
-              className="h-11 bg-amber-500 text-base font-semibold text-neutral-950 shadow-lg shadow-amber-500/20 hover:bg-amber-400 disabled:pointer-events-none disabled:opacity-40"
+              className="h-11 rounded-full bg-stone-900 px-6 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
             >
               <Download className="size-5" aria-hidden="true" />
               Скачать PNG

@@ -22,7 +22,7 @@ export function Toaster() {
             <div className="flex w-full items-start gap-3">
               {variant === "success" && (
                 <span
-                  className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-amber-500/15 text-amber-400"
+                  className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-600"
                   aria-hidden="true"
                 >
                   <Check className="size-3.5" strokeWidth={2.5} />
@@ -30,7 +30,7 @@ export function Toaster() {
               )}
               {variant === "destructive" && (
                 <span
-                  className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-white/15 text-white"
+                  className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-white/20 text-white"
                   aria-hidden="true"
                 >
                   <AlertTriangle className="size-3.5" strokeWidth={2.5} />

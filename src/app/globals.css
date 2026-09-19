@@ -37,81 +37,51 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 8px);
+  --radius-md: calc(var(--radius) - 4px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/*
+  Палитра «мягкого светлого минимализма»:
+  тёплый почти-белый фон, чернильный текст, один акцент — терракота.
+  Всё остальное — оттенки камня (stone).
+*/
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --radius: 1rem;
+  --background: oklch(0.984 0.003 85);
+  --foreground: oklch(0.216 0.008 80);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.216 0.008 80);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.52 0.21 24);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.216 0.008 80);
+  --primary: oklch(0.244 0.01 80);
+  --primary-foreground: oklch(0.985 0.003 85);
+  --secondary: oklch(0.955 0.004 85);
+  --secondary-foreground: oklch(0.244 0.01 80);
+  --muted: oklch(0.955 0.004 85);
+  --muted-foreground: oklch(0.5 0.012 80);
+  --accent: oklch(0.94 0.005 85);
+  --accent-foreground: oklch(0.244 0.01 80);
+  --destructive: oklch(0.577 0.222 27.2);
+  --destructive-foreground: oklch(0.985 0.003 85);
+  --border: oklch(0.912 0.004 85);
+  --input: oklch(0.912 0.004 85);
+  --ring: oklch(0.66 0.16 45);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
-
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.52 0.21 24);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.985 0.003 85);
+  --sidebar-foreground: oklch(0.216 0.008 80);
+  --sidebar-primary: oklch(0.244 0.01 80);
+  --sidebar-primary-foreground: oklch(0.985 0.003 85);
+  --sidebar-accent: oklch(0.94 0.005 85);
+  --sidebar-accent-foreground: oklch(0.244 0.01 80);
+  --sidebar-border: oklch(0.912 0.004 85);
+  --sidebar-ring: oklch(0.66 0.16 45);
 }
 
 @layer base {
@@ -123,8 +93,8 @@
   }
   /* Выделение текста в тон акценту приложения */
   ::selection {
-    background: rgba(251, 191, 36, 0.35);
-    color: #fff;
+    background: oklch(0.72 0.15 50 / 0.28);
+    color: oklch(0.216 0.008 80);
   }
 }
 
@@ -135,28 +105,28 @@ html {
 
 /* ---------- Оформление студии AR-меток ---------- */
 
-/* Тёплая подсветка поверх тёмного фона */
-.app-glow {
-  background:
-    radial-gradient(55% 38% at 72% -4%, rgba(251, 191, 36, 0.09), transparent 70%),
-    radial-gradient(38% 30% at 8% 6%, rgba(249, 115, 22, 0.05), transparent 70%);
+/* Мягкие рассеянные тени вместо свечений и blur-панелей */
+.shadow-soft {
+  box-shadow:
+    0 1px 2px rgba(41, 37, 33, 0.05),
+    0 16px 40px -12px rgba(41, 37, 33, 0.12);
 }
-
-/* Едва заметная техническая сетка, растворяется к низу */
-.app-grid {
-  background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 44px 44px;
-  mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, black 25%, transparent 78%);
-  -webkit-mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, black 25%, transparent 78%);
+.shadow-soft-sm {
+  box-shadow:
+    0 1px 2px rgba(41, 37, 33, 0.06),
+    0 6px 16px -6px rgba(41, 37, 33, 0.1);
+}
+.shadow-soft-lg {
+  box-shadow:
+    0 2px 4px rgba(41, 37, 33, 0.06),
+    0 28px 64px -16px rgba(41, 37, 33, 0.18);
 }
 
 /* Появление карточек: мягкий подъём с проявлением */
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
@@ -164,7 +134,7 @@ html {
   }
 }
 .anim-rise {
-  animation: rise-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .anim-rise-delay-1 {
   animation-delay: 0.08s;
@@ -188,7 +158,7 @@ html {
   animation: paper-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Тонкий скроллбар под тёмную тему */
+/* Тонкий скроллбар под светлую тему */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -197,11 +167,11 @@ html {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(41, 37, 33, 0.18);
   border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(41, 37, 33, 0.3);
 }
 
 /* Печать: лист метки на белом фоне */
