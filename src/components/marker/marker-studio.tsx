@@ -47,13 +47,29 @@ import {
   drawMarker,
   exportMarkerPng,
   markerFileName,
+  PATTERN_CAPACITY,
   renderMarkerDataUrl,
   type MarkerConfig,
 } from "@/lib/marker";
-import { Copy, Download, FileDown, History, Maximize2, Search, SearchX, Shapes, Trash2, Type, X } from "lucide-react";
+import { Copy, Download, FileDown, History, Maximize2, Search, SearchX, Shapes, Share2, Trash2, TriangleAlert, Type, X, Cloud, CloudOff } from "lucide-react";
+import { cloudEnabled, fetchCloudMarkers, pushCloudMarker } from "@/lib/cloud";
 
 const HISTORY_KEY = "ar-marker-studio:history:v2";
 const EXPORT_SIZE = 2048;
+
+/* Статус облачной синхронизации: off — сборка без ключей (локальный режим),
+   syncing — грузим, on — работает, error — облако недоступно */
+type CloudStatus = "off" | "syncing" | "on" | "error";
+interface CloudState {
+  status: CloudStatus;
+  items: { name: string; created_at: string }[];
+}
+
+const CLOUD_ON = cloudEnabled();
+
+function normalizeName(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
 
 function signature(it: MarkerConfig): string {
   // ID и есть идентичность метки: «Молния» и «молния» — один и тот же узор
@@ -106,6 +122,10 @@ export function MarkerStudio() {
   const [historyQuery, setHistoryQuery] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [fontsReady, setFontsReady] = useState(false);
+  const [cloud, setCloud] = useState<CloudState>(() => ({
+    status: CLOUD_ON ? "syncing" : "off",
+    items: [],
+  }));
 
   const previewRef = useRef<HTMLCanvasElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -123,6 +143,68 @@ export function MarkerStudio() {
     if (!q) return history;
     return history.filter((it) => it.name.toLowerCase().includes(q));
   }, [history, historyQuery]);
+
+  /* Облачные метки, которых нет в локальной истории: узор восстановится
+     из названия — храним только его. Показываем с бейджем «Облако». */
+  const cloudOnlyItems = useMemo<HistoryItem[]>(() => {
+    if (cloud.status !== "on") return [];
+    const localNames = new Set(history.map((it) => normalizeName(it.name)));
+    return cloud.items
+      .filter((c) => !localNames.has(normalizeName(c.name)))
+      .map((c) => ({
+        name: c.name,
+        id: deriveId(c.name),
+        ts: Date.parse(c.created_at) || Date.now(),
+      }));
+  }, [cloud, history]);
+
+  /* Поиск распространяется и на облачные метки */
+  const filteredCloud = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    if (!q) return cloudOnlyItems;
+    return cloudOnlyItems.filter((it) => it.name.toLowerCase().includes(q));
+  }, [cloudOnlyItems, historyQuery]);
+
+  /* Защита от коллизий узоров: ёмкость алфавита конечна (10,6 млн),
+     и два разных названия МОГУТ дать один узор — камера будет путать их.
+     Ищем совпадение текущего узора с узорами уже созданных меток. */
+  const collisionWith = useMemo<string | null>(() => {
+    if (!design || !name.trim()) return null;
+    const currentSig = [...design.cells].sort((a, b) => a - b).join(",");
+    const others = [...history, ...cloudOnlyItems].filter((it) => it.id !== id);
+    for (const it of others) {
+      const other = createMarkerDesign(it.id);
+      if (!other) continue;
+      const otherSig = [...other.cells].sort((a, b) => a - b).join(",");
+      if (otherSig === currentSig) return it.name;
+    }
+    return null;
+  }, [design, id, name, history, cloudOnlyItems]);
+
+  /* Загрузка списка из облака (первая + ручное обновление по клику на чип) */
+  const refreshCloud = useCallback(async (): Promise<void> => {
+    if (!CLOUD_ON) return;
+    setCloud((prev) => ({ ...prev, status: prev.status === "on" ? "syncing" : prev.status }));
+    try {
+      const items = await fetchCloudMarkers();
+      setCloud({ status: "on", items });
+    } catch {
+      setCloud((prev) => ({ ...prev, status: "error" }));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshCloud();
+  }, [refreshCloud]);
+
+  /* Пуш в облако при «коммите» метки: скачивание, PDF или шеринг.
+     Fire-and-forget: сбой не мешает основной операции. */
+  const pushCloud = (n: string): void => {
+    if (!CLOUD_ON) return;
+    void pushCloudMarker(n)
+      .then(() => refreshCloud())
+      .catch(() => setCloud((prev) => (prev.status === "on" ? { ...prev, status: "error" } : prev)));
+  };
 
   /* Перерисовка предпросмотра после загрузки шрифтов */
   useEffect(() => {
@@ -164,6 +246,20 @@ export function MarkerStudio() {
       ? `Метка «${trimmed}» — Генератор AR-меток`
       : "Генератор AR-меток — трекер-метки для 3D-машинок";
   }, [name]);
+
+  /* Ссылка «Поделиться»: метка открывается по URL с названием и размером.
+     Считываем параметры один раз после монтирования (клиент-only). */
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const shared = params.get("name")?.trim() ?? "";
+      if (shared) setName(shared.slice(0, 60));
+      const size = Number(params.get("size"));
+      if (size === 10 || size === 13 || size === 16) setPrintSizeCm(size);
+    } catch {
+      // URL без параметров — обычный запуск
+    }
+  }, []);
 
   /* Липкая мобильная панель резервирует место внизу страницы (body padding),
      чтобы подвал не оказывался под ней; на десктопе и печати — без резерва */
@@ -237,6 +333,7 @@ export function MarkerStudio() {
       const blob = await exportMarkerPng(design, { name, id, size: EXPORT_SIZE, dpr: 1 });
       saveBlob(blob, markerFileName(name, id));
       addToHistory({ name, id });
+      pushCloud(name.trim());
       toast({
         title: "PNG сохранён",
         description: `Метка «${name.trim()}» — 2048 px по ширине.`,
@@ -270,6 +367,7 @@ export function MarkerStudio() {
       pdf.addImage(url, "PNG", (210 - w) / 2, (297 - h) / 2, w, h);
       pdf.setProperties({ title: `AR-marker ${id}` });
       saveBlob(pdf.output("blob"), markerFileName(name, id, "pdf"));
+      pushCloud(name.trim());
       toast({
         title: "PDF сохранён",
         description: `Метка «${name.trim()}» — ${printSizeCm} см на листе A4.`,
@@ -281,9 +379,9 @@ export function MarkerStudio() {
     }
   };
 
-  /** PDF-лист A4 со всеми метками из истории — сетка 2 колонки по 8.5 см */
+  /** PDF-лист A4 со всеми метками (локальные + облачные) — сетка 2 колонки по 8.5 см */
   const handlePdfAll = (): void => {
-    if (history.length === 0) return;
+    if (history.length === 0 && cloudOnlyItems.length === 0) return;
     void (async () => {
       try {
         const { jsPDF } = await import("jspdf");
@@ -295,7 +393,8 @@ export function MarkerStudio() {
         let col = 0;
         let y = margin;
         let placed = 0;
-        for (const it of history) {
+        const all = [...history, ...cloudOnlyItems];
+        for (const it of all) {
           const itemDesign = createMarkerDesign(it.id);
           if (!itemDesign) continue;
           const url = renderMarkerDataUrl(itemDesign, {
@@ -387,18 +486,62 @@ export function MarkerStudio() {
     }
   };
 
+  /** Ссылка на метку: открывается готовой — с названием и размером печати.
+      На телефоне — системный шеринг, на десктопе — буфер обмена. */
+  const handleShare = async (): Promise<void> => {
+    if (!name.trim() || !design) {
+      toast({
+        title: "Введите название",
+        description: "Ссылка ведёт на метку с этим названием.",
+        variant: "destructive",
+        duration: 3500,
+      });
+      return;
+    }
+    const trimmedName = name.trim();
+    const url = `${window.location.origin}${window.location.pathname}?name=${encodeURIComponent(
+      trimmedName
+    )}&size=${printSizeCm}`;
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: `Метка «${trimmedName}»`,
+          text: "AR-метка: уникальный узор из названия",
+          url,
+        });
+        return;
+      } catch (err) {
+        // Пользователь закрыл системный диалог — ничего не делаем;
+        // остальные ошибки (нет share-хендлера) — уходим в буфер обмена
+        if (err instanceof DOMException && err.name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      pushCloud(trimmedName);
+      toast({
+        title: "Ссылка скопирована",
+        description: `Метка «${trimmedName}» откроется готовой к печати.`,
+        variant: "success",
+        duration: 3000,
+      });
+    } catch {
+      toast({ title: "Не удалось скопировать ссылку", variant: "destructive", duration: 2500 });
+    }
+  };
+
   const downloadDisabled = !name.trim();
 
   return (
     <>
       <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(340px,420px)_1fr] lg:items-start">
         {/* Панель метки (тянется на высоту своей строки — без щелей под карточкой) */}
-        <Card className="anim-rise rounded-[28px] border-stone-200/80 bg-white shadow-soft lg:col-start-1 lg:row-start-1 lg:h-full">
+        <Card className="anim-rise rounded-[28px] border-stone-200/80 bg-white shadow-soft lg:col-start-1 lg:row-start-1 lg:h-full dark:border-stone-800 dark:bg-stone-900">
           <CardContent className="space-y-6">
             {/* Название — единственный ввод: задаёт и подпись, и уникальный узор */}
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="marker-name" className="text-sm font-medium text-stone-700">
+                <Label htmlFor="marker-name" className="text-sm font-medium text-stone-700 dark:text-stone-300">
                   Название метки
                 </Label>
                 {/* Счётчик виден только у самого лимита — не захламляет обычный ввод */}
@@ -424,7 +567,7 @@ export function MarkerStudio() {
                     if (e.key === "Enter") void handleDownload();
                   }}
                   placeholder="Например: Красная спортивная"
-                  className="h-14 rounded-2xl border-stone-200 bg-stone-50/80 pr-12 text-[15px] text-stone-900 caret-orange-600 placeholder:text-stone-400 focus-visible:border-stone-300 focus-visible:ring-stone-400/25"
+                  className="h-14 rounded-2xl border-stone-200 bg-stone-50/80 pr-12 text-[15px] text-stone-900 caret-orange-600 placeholder:text-stone-400 focus-visible:border-stone-300 focus-visible:ring-stone-400/25 dark:border-stone-700 dark:bg-stone-800/60 dark:text-stone-100 dark:placeholder:text-stone-500 dark:focus-visible:border-stone-600 dark:focus-visible:ring-stone-500/30"
                 />
                 {name.length > 0 && (
                   <button
@@ -434,15 +577,26 @@ export function MarkerStudio() {
                       nameInputRef.current?.focus();
                     }}
                     aria-label="Очистить название"
-                    className="absolute inset-y-0 right-3 my-auto grid size-7 place-items-center rounded-full text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50"
+                    className="absolute inset-y-0 right-3 my-auto grid size-7 place-items-center rounded-full text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:text-stone-500 dark:hover:bg-stone-800 dark:hover:text-stone-300 dark:focus-visible:ring-stone-600/50"
                   >
                     <X className="size-4" aria-hidden="true" />
                   </button>
                 )}
               </div>
-              <p className="text-xs text-stone-500">
+              <p className="text-xs text-stone-500 dark:text-stone-400">
                 Название печатается над меткой и задаёт её уникальный узор
               </p>
+              {/* Коллизия узоров: разные названия дали один узор — камера
+                  будет путать метки, предлагаем сменить название */}
+              {collisionWith && (
+                <p
+                  role="alert"
+                  className="flex items-start gap-1.5 rounded-2xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                >
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  Узор совпал с меткой «{collisionWith}» — камера будет путать их. Выберите другое название.
+                </p>
+              )}
             </div>
 
             {/* Действия */}
@@ -451,7 +605,7 @@ export function MarkerStudio() {
                 type="button"
                 onClick={handleDownload}
                 disabled={downloadDisabled}
-                className="h-12 flex-1 rounded-full bg-stone-900 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
+                className="h-12 flex-1 rounded-full bg-stone-900 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white dark:hover:shadow-soft"
               >
                 <Download className="size-5" aria-hidden="true" />
                 Скачать PNG
@@ -462,16 +616,27 @@ export function MarkerStudio() {
                 onClick={() => void handlePdf()}
                 disabled={downloadDisabled}
                 title="Скачать PDF: лист A4 с точным размером метки"
-                className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
+                className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700 dark:hover:text-stone-100"
               >
                 <FileDown className="size-5" aria-hidden="true" />
                 PDF
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleShare()}
+                disabled={downloadDisabled}
+                title="Скопировать ссылку: метка откроется готовой"
+                className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+              >
+                <Share2 className="size-5" aria-hidden="true" />
+                Поделиться
               </Button>
             </div>
 
             {/* Размер печати */}
             <div className="space-y-2">
-              <Label htmlFor="marker-print-size" className="text-sm font-medium text-stone-700">
+              <Label htmlFor="marker-print-size" className="text-sm font-medium text-stone-700 dark:text-stone-300">
                 Размер при печати
               </Label>
               <ToggleGroup
@@ -482,14 +647,14 @@ export function MarkerStudio() {
                   if (v) setPrintSizeCm(Number(v));
                 }}
                 aria-label="Размер при печати"
-                className="h-12 w-full gap-1 rounded-full border border-stone-200/80 bg-stone-100/70 p-1 shadow-none"
+                className="h-12 w-full gap-1 rounded-full border border-stone-200/80 bg-stone-100/70 p-1 shadow-none dark:border-stone-700/80 dark:bg-stone-800/70"
               >
                 {[10, 13, 16].map((cm) => (
                   <ToggleGroupItem
                     key={cm}
                     value={String(cm)}
                     aria-label={`${cm} сантиметров`}
-                    className="h-10 flex-1 rounded-full border-0 bg-transparent px-2 text-sm font-medium text-stone-500 shadow-none transition-colors hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white"
+                    className="h-10 flex-1 rounded-full border-0 bg-transparent px-2 text-sm font-medium text-stone-500 shadow-none transition-colors hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white dark:text-stone-400 dark:hover:text-stone-200 dark:data-[state=on]:bg-stone-200 dark:data-[state=on]:text-stone-900 dark:data-[state=on]:hover:bg-stone-200"
                   >
                     {cm} см
                   </ToggleGroupItem>
@@ -509,10 +674,10 @@ export function MarkerStudio() {
           <Card
             className={`rounded-[28px] border-stone-200/80 bg-white shadow-soft${
               design ? "" : " lg:h-full"
-            }`}
+            } dark:border-stone-800 dark:bg-stone-900`}
           >
             <CardHeader>
-              <CardTitle className="text-[17px] font-semibold tracking-tight text-stone-900">Предпросмотр</CardTitle>
+              <CardTitle className="text-[17px] font-semibold tracking-tight text-stone-900 dark:text-stone-100">Предпросмотр</CardTitle>
               <CardAction>
                 {id ? (
                   <button
@@ -520,25 +685,25 @@ export function MarkerStudio() {
                     onClick={() => void copyId(id)}
                     title="Скопировать ID"
                     aria-label={`Скопировать ID ${id}`}
-                    className="-mx-1 inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-mono text-xs tracking-wider text-orange-700 transition-colors hover:bg-orange-50 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/60"
+                    className="-mx-1 inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-mono text-xs tracking-wider text-orange-700 transition-colors hover:bg-orange-50 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/60 dark:text-orange-400 dark:hover:bg-orange-950/50 dark:hover:text-orange-300 dark:focus-visible:ring-orange-500/40"
                   >
                     {id}
                     <Copy className="size-3.5 opacity-60" aria-hidden="true" />
                   </button>
                 ) : (
-                  <span className="font-mono text-xs tracking-wider text-stone-400">—</span>
+                  <span className="font-mono text-xs tracking-wider text-stone-400 dark:text-stone-500">—</span>
                 )}
               </CardAction>
             </CardHeader>
             <CardContent className={design ? "" : "flex flex-1 flex-col"}>
               {design ? (
-                <div className="mx-auto max-w-[480px] rounded-[24px] bg-stone-100/80 p-5">
+                <div className="mx-auto max-w-[480px] rounded-[24px] bg-stone-100/80 p-5 dark:bg-stone-800/60">
                   <button
                     type="button"
                     onClick={() => setZoomOpen(true)}
                     title="Открыть метку крупно"
                     aria-label="Открыть метку крупно"
-                    className="anim-paper group/zoom relative mx-auto block w-full cursor-zoom-in overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90 transition-shadow duration-300 hover:shadow-soft-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
+                    className="anim-paper group/zoom relative mx-auto block w-full cursor-zoom-in overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90 transition-shadow duration-300 hover:shadow-soft-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 dark:ring-stone-700/90 dark:focus-visible:ring-orange-400"
                   >
                     <canvas
                       ref={previewRef}
@@ -546,7 +711,7 @@ export function MarkerStudio() {
                       aria-label="Предпросмотр метки"
                     />
                     {/* Подсказка зума: появляется при наведении */}
-                    <span className="pointer-events-none absolute right-3 top-3 grid size-8 place-items-center rounded-full bg-white/85 text-stone-700 opacity-0 shadow-soft-sm backdrop-blur-sm transition-opacity duration-200 group-hover/zoom:opacity-100">
+                    <span className="pointer-events-none absolute right-3 top-3 grid size-8 place-items-center rounded-full bg-white/85 text-stone-700 opacity-0 shadow-soft-sm backdrop-blur-sm transition-opacity duration-200 group-hover/zoom:opacity-100 dark:bg-stone-900/85 dark:text-stone-200">
                       <Maximize2 className="size-4" aria-hidden="true" />
                     </span>
                   </button>
@@ -554,8 +719,8 @@ export function MarkerStudio() {
               ) : (
                 /* Пустое состояние: компактный онбординг из двух шагов —
                    вместо высокой пустой заглушки */
-                <div className="mx-auto flex w-full max-w-[480px] flex-1 flex-col justify-center gap-4 rounded-[24px] border-2 border-dashed border-stone-300/80 bg-stone-100/60 p-5 sm:p-6">
-                  <p className="text-center text-xs font-medium text-stone-500">
+                <div className="mx-auto flex w-full max-w-[480px] flex-1 flex-col justify-center gap-4 rounded-[24px] border-2 border-dashed border-stone-300/80 bg-stone-100/60 p-5 sm:p-6 dark:border-stone-700/80 dark:bg-stone-800/50">
+                  <p className="text-center text-xs font-medium text-stone-500 dark:text-stone-400">
                     Как это работает
                   </p>
                   <ol className="grid list-none gap-2.5 sm:grid-cols-2">
@@ -573,16 +738,16 @@ export function MarkerStudio() {
                     ].map((step) => (
                       <li
                         key={step.title}
-                        className="flex items-start gap-3 rounded-2xl bg-white/80 px-4 py-4"
+                        className="flex items-start gap-3 rounded-2xl bg-white/80 px-4 py-4 dark:bg-stone-800/70"
                       >
-                        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-stone-100 text-stone-700">
+                        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300">
                           <step.icon className="size-4" aria-hidden="true" />
                         </span>
                         <span className="min-w-0">
-                          <span className="block text-[13px] font-medium leading-snug text-stone-800 break-words">
+                          <span className="block text-[13px] font-medium leading-snug text-stone-800 break-words dark:text-stone-200">
                             {step.title}
                           </span>
-                          <span className="mt-1 block text-xs leading-snug text-stone-500 break-words">
+                          <span className="mt-1 block text-xs leading-snug text-stone-500 break-words dark:text-stone-400">
                             {step.text}
                           </span>
                         </span>
@@ -598,17 +763,63 @@ export function MarkerStudio() {
         {/* История — третья ячейка грида: левая колонка под панелью.
             Страница собрана без пустот: карточка заполняет строку целиком,
             длинный список прокручивается внутри */}
-        <Card className="anim-rise anim-rise-delay-2 flex flex-col gap-0 rounded-[28px] border-stone-200/80 bg-white py-0 shadow-soft lg:col-start-1 lg:row-start-2 lg:h-full">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-stone-100 px-5 py-4">
+        <Card className="anim-rise anim-rise-delay-2 flex flex-col gap-0 rounded-[28px] border-stone-200/80 bg-white py-0 shadow-soft lg:col-start-1 lg:row-start-2 lg:h-full dark:border-stone-800 dark:bg-stone-900">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-stone-100 px-5 py-4 dark:border-stone-800/80">
             <h2
               id="history-heading"
-              className="flex min-w-0 items-center gap-2 text-[15px] font-semibold tracking-tight text-stone-900"
+              className="flex min-w-0 items-center gap-2 text-[15px] font-semibold tracking-tight text-stone-900 dark:text-stone-100"
             >
-              <History className="size-4 shrink-0 text-stone-400" aria-hidden="true" />
+              <History className="size-4 shrink-0 text-stone-400 dark:text-stone-500" aria-hidden="true" />
               История меток
-              <Badge variant="secondary" className="bg-stone-100 text-stone-600 tabular-nums">
+              <Badge variant="secondary" className="bg-stone-100 text-stone-600 tabular-nums dark:bg-stone-800 dark:text-stone-300">
                 {history.length}
               </Badge>
+              {/* Статус синхронизации: локально / синхронизировано / ошибка */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (cloud.status === "on" || cloud.status === "error" || cloud.status === "syncing") void refreshCloud();
+                }}
+                aria-live="polite"
+                title={
+                  cloud.status === "on"
+                    ? `${cloud.items.length} меток в облаке — обновить список`
+                    : cloud.status === "error"
+                      ? "Облако недоступно — попробовать снова"
+                      : "История хранится в этом браузере. Подключение Supabase (см. HOSTING.md) включит синхронизацию между устройствами"
+                }
+                className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:focus-visible:ring-stone-600/50"
+              >
+                {cloud.status === "on" && (
+                  <Cloud className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                )}
+                {cloud.status === "syncing" && (
+                  <Cloud className="size-3.5 animate-pulse text-stone-400 dark:text-stone-500" aria-hidden="true" />
+                )}
+                {(cloud.status === "off" || cloud.status === "error") && (
+                  <CloudOff
+                    className={`size-3.5 ${cloud.status === "error" ? "text-red-500" : "text-stone-400 dark:text-stone-500"}`}
+                    aria-hidden="true"
+                  />
+                )}
+                <span
+                  className={
+                    cloud.status === "on"
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : cloud.status === "error"
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-stone-400 dark:text-stone-500"
+                  }
+                >
+                  {cloud.status === "on"
+                    ? "Синхронизировано"
+                    : cloud.status === "syncing"
+                      ? "Синхронизация…"
+                      : cloud.status === "error"
+                        ? "Облако недоступно"
+                        : "Локально"}
+                </span>
+              </button>
             </h2>
             {history.length > 0 && (
               <div className="ml-auto flex items-center gap-1">
@@ -617,7 +828,7 @@ export function MarkerStudio() {
                   size="sm"
                   onClick={handlePdfAll}
                   title="Скачать лист A4 со всеми метками (8.5 см)"
-                  className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+                  className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                 >
                   <FileDown className="size-4" aria-hidden="true" />
                   PDF всех
@@ -627,24 +838,24 @@ export function MarkerStudio() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="rounded-full text-stone-500 hover:bg-red-50 hover:text-red-600"
+                      className="rounded-full text-stone-500 hover:bg-red-50 hover:text-red-600 dark:text-stone-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                     >
                       <Trash2 className="size-4" aria-hidden="true" />
                       Очистить
                     </Button>
                   </AlertDialogTrigger>
-                  <AlertDialogContent className="rounded-[24px] border-stone-200/80 bg-white text-stone-900 shadow-soft">
+                  <AlertDialogContent className="rounded-[24px] border-stone-200/80 bg-white text-stone-900 shadow-soft dark:border-stone-800 dark:bg-stone-900 dark:text-stone-100">
                     <AlertDialogHeader>
-                      <AlertDialogTitle className="text-stone-900">
+                      <AlertDialogTitle className="text-stone-900 dark:text-stone-100">
                         Очистить историю?
                       </AlertDialogTitle>
-                      <AlertDialogDescription className="text-stone-500">
+                      <AlertDialogDescription className="text-stone-500 dark:text-stone-400">
                         Все сохранённые метки ({history.length}) пропадут из списка.
                         Скачанные PNG-файлы это не затронет.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel className="rounded-full border-transparent bg-stone-100 text-stone-700 hover:bg-stone-200 hover:text-stone-900">
+                      <AlertDialogCancel className="rounded-full border-transparent bg-stone-100 text-stone-700 hover:bg-stone-200 hover:text-stone-900 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700 dark:hover:text-stone-100">
                         Отмена
                       </AlertDialogCancel>
                       <AlertDialogAction
@@ -662,10 +873,10 @@ export function MarkerStudio() {
 
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
             {/* Поиск по названию: появляется, когда список реально длинный */}
-            {history.length >= 6 && (
+            {history.length + cloudOnlyItems.length >= 6 && (
               <div className="relative">
                 <Search
-                  className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400"
+                  className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
                   aria-hidden="true"
                 />
                 <input
@@ -674,23 +885,23 @@ export function MarkerStudio() {
                   onChange={(e) => setHistoryQuery(e.target.value)}
                   placeholder="Поиск по названию"
                   aria-label="Поиск по названию метки"
-                  className="h-10 w-full rounded-full border border-stone-200 bg-stone-50/80 pl-9 pr-4 text-sm text-stone-900 placeholder:text-stone-400 caret-orange-600 focus-visible:border-stone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50"
+                  className="h-10 w-full rounded-full border border-stone-200 bg-stone-50/80 pl-9 pr-4 text-sm text-stone-900 placeholder:text-stone-400 caret-orange-600 focus-visible:border-stone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:border-stone-700 dark:bg-stone-800/60 dark:text-stone-100 dark:placeholder:text-stone-500 dark:focus-visible:border-stone-600 dark:focus-visible:ring-stone-500/30"
                 />
               </div>
             )}
-            {history.length === 0 ? (
+            {history.length === 0 && cloudOnlyItems.length === 0 ? (
               /* Тихая центрированная подсказка вместо большой пустой коробки */
-              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center">
-                <Shapes className="size-6 text-stone-300" aria-hidden="true" />
-                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500">
+              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center dark:border-stone-800 dark:bg-stone-800/40">
+                <Shapes className="size-6 text-stone-300 dark:text-stone-600" aria-hidden="true" />
+                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500 dark:text-stone-400">
                   Скачайте первую метку — она появится здесь
                 </p>
               </div>
-            ) : filteredHistory.length === 0 ? (
+            ) : filteredHistory.length === 0 && filteredCloud.length === 0 ? (
               /* Запрос ничего не нашёл — тихое состояние, без коробки-громилы */
-              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center">
-                <SearchX className="size-6 text-stone-300" aria-hidden="true" />
-                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500">
+              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center dark:border-stone-800 dark:bg-stone-800/40">
+                <SearchX className="size-6 text-stone-300 dark:text-stone-600" aria-hidden="true" />
+                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500 dark:text-stone-400">
                   Ничего не найдено по «{historyQuery.trim()}»
                 </p>
               </div>
@@ -707,26 +918,52 @@ export function MarkerStudio() {
                     />
                   </li>
                 ))}
+                {filteredCloud.map((item, i) => (
+                  <li key={`cloud-${item.ts}`}>
+                    <HistoryCard
+                      item={item}
+                      index={filteredHistory.length + i}
+                      cloud
+                      onDownload={downloadItem}
+                      onLoad={loadItem}
+                    />
+                  </li>
+                ))}
               </ul>
             )}
+
+            {/* Счётчик уникальных узоров: ёмкость алфавита 5×5 (полный перебор)
+                и сколько мест уже занято — локальная история + облако */}
+            <div
+              className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-stone-100 pt-3 text-[11px] text-stone-400 tabular-nums dark:border-stone-800/80 dark:text-stone-500"
+              title="Узор метки — матрица 5×5 с правилами плотности, серий и поворотной асимметрии. Ёмкость всех допустимых узоров подсчитана полным перебором (scripts/count_patterns.ts). Занято — уникальные названия в истории и облаке."
+            >
+              <span>
+                Уникальных узоров:{" "}
+                <span className="font-medium text-stone-500 dark:text-stone-400">
+                  {PATTERN_CAPACITY.toLocaleString("ru-RU")}
+                </span>
+              </span>
+              <span aria-live="polite">Занято: {history.length + cloudOnlyItems.length}</span>
+            </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Мобильная липкая панель: скачать, не прокручивая наверх */}
       {design && (
-        <div className="marker-sticky-bar fixed inset-x-3 bottom-3 z-30 rounded-[24px] border border-stone-200/80 bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-soft-lg backdrop-blur-md print:hidden lg:hidden">
+        <div className="marker-sticky-bar fixed inset-x-3 bottom-3 z-30 rounded-[24px] border border-stone-200/80 bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-soft-lg backdrop-blur-md print:hidden lg:hidden dark:border-stone-700/80 dark:bg-stone-900/95">
           <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-stone-900" title={name}>
+              <div className="truncate text-sm font-medium text-stone-900 dark:text-stone-100" title={name}>
                 {name}
               </div>
-              <div className="font-mono text-xs tracking-wider text-orange-700">{id}</div>
+              <div className="font-mono text-xs tracking-wider text-orange-700 dark:text-orange-400">{id}</div>
             </div>
             <Button
               type="button"
               onClick={handleDownload}
-              className="h-11 shrink-0 rounded-full bg-stone-900 px-5 font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 active:scale-[0.98]"
+              className="h-11 shrink-0 rounded-full bg-stone-900 px-5 font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 active:scale-[0.98] dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
             >
               <Download className="size-5" aria-hidden="true" />
               Скачать
@@ -737,13 +974,13 @@ export function MarkerStudio() {
 
       {/* Крупный просмотр метки */}
       <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
-        <DialogContent className="max-w-[min(92vw,720px)] rounded-[28px] border-stone-200/80 bg-white p-4 shadow-soft sm:p-6">
+        <DialogContent className="max-w-[min(92vw,720px)] rounded-[28px] border-stone-200/80 bg-white p-4 shadow-soft sm:p-6 dark:border-stone-800 dark:bg-stone-900">
           <DialogHeader className="sr-only">
             <DialogTitle>Метка крупно</DialogTitle>
             <DialogDescription>Увеличенный предпросмотр метки</DialogDescription>
           </DialogHeader>
-          <div className="mx-auto w-full max-w-[640px] rounded-[24px] bg-stone-100/80 p-4 sm:p-5">
-            <div className="overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90">
+          <div className="mx-auto w-full max-w-[640px] rounded-[24px] bg-stone-100/80 p-4 sm:p-5 dark:bg-stone-800/60">
+            <div className="overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90 dark:ring-stone-700/90">
               <canvas
                 ref={drawZoom}
                 className="block h-auto w-full"
@@ -756,7 +993,7 @@ export function MarkerStudio() {
               type="button"
               onClick={handleDownload}
               disabled={downloadDisabled}
-              className="h-11 rounded-full bg-stone-900 px-6 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
+              className="h-11 rounded-full bg-stone-900 px-6 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
             >
               <Download className="size-5" aria-hidden="true" />
               Скачать PNG

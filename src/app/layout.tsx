@@ -42,9 +42,12 @@ export const metadata: Metadata = {
   },
 };
 
-/** PWA: тёплый светлый интерфейс — рамки и статус-бар в тон фона */
+/** PWA: theme-color подстраивается под активную тему (светлая/тёмная) */
 export const viewport: Viewport = {
-  themeColor: "#FBFAF7",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FBFAF7" },
+    { media: "(prefers-color-scheme: dark)", color: "#1C1917" },
+  ],
 };
 
 export default function RootLayout({
@@ -61,6 +64,14 @@ export default function RootLayout({
         suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        {/* Тема до первой отрисовки (анти-вспышка): инлайн-скрипт ставит
+            класс .dark на <html> по сохранённому выбору или системной теме.
+            Выполняется синхронно до отрисовки контента body. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem("ar-theme");var d=t?t==="dark":window.matchMedia("(prefers-color-scheme: dark)").matches;if(d)document.documentElement.classList.add("dark")}catch(e){}`,
+          }}
+        />
         {children}
         <ServiceWorkerRegister />
         <div className="print:hidden">

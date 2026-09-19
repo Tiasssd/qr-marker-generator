@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   --color-background: var(--background);
@@ -49,6 +49,7 @@
   Всё остальное — оттенки камня (stone).
 */
 :root {
+  color-scheme: light;
   --radius: 1rem;
   --background: oklch(0.984 0.003 85);
   --foreground: oklch(0.216 0.008 80);
@@ -84,6 +85,46 @@
   --sidebar-ring: oklch(0.66 0.16 45);
 }
 
+/* Тёмная тема: та же тёплая гамма камня, инвертированная.
+   Фон — глубокий тёплый графит, карточки на ступень светлее,
+   «чернильные» кнопки инвертируются в светлые пилюли.
+   Бумага метки (canvas) остаётся белой — узору нужен контраст. */
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.178 0.004 85);
+  --foreground: oklch(0.928 0.004 85);
+  --card: oklch(0.223 0.005 85);
+  --card-foreground: oklch(0.928 0.004 85);
+  --popover: oklch(0.24 0.005 85);
+  --popover-foreground: oklch(0.928 0.004 85);
+  --primary: oklch(0.928 0.004 85);
+  --primary-foreground: oklch(0.216 0.008 80);
+  --secondary: oklch(0.28 0.005 85);
+  --secondary-foreground: oklch(0.928 0.004 85);
+  --muted: oklch(0.28 0.005 85);
+  --muted-foreground: oklch(0.68 0.008 80);
+  --accent: oklch(0.3 0.005 85);
+  --accent-foreground: oklch(0.928 0.004 85);
+  --destructive: oklch(0.62 0.2 25);
+  --destructive-foreground: oklch(0.985 0.003 85);
+  --border: oklch(0.32 0.005 85);
+  --input: oklch(0.32 0.005 85);
+  --ring: oklch(0.72 0.15 50);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.223 0.005 85);
+  --sidebar-foreground: oklch(0.928 0.004 85);
+  --sidebar-primary: oklch(0.928 0.004 85);
+  --sidebar-primary-foreground: oklch(0.216 0.008 80);
+  --sidebar-accent: oklch(0.3 0.005 85);
+  --sidebar-accent-foreground: oklch(0.928 0.004 85);
+  --sidebar-border: oklch(0.32 0.005 85);
+  --sidebar-ring: oklch(0.72 0.15 50);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -96,6 +137,10 @@
     background: oklch(0.72 0.15 50 / 0.28);
     color: oklch(0.216 0.008 80);
   }
+  .dark ::selection {
+    background: oklch(0.72 0.15 50 / 0.4);
+    color: oklch(0.97 0.003 85);
+  }
 }
 
 /* Стабильная полоса прокрутки — без микросдвигов при росте контента */
@@ -105,21 +150,38 @@ html {
 
 /* ---------- Оформление студии AR-меток ---------- */
 
-/* Мягкие рассеянные тени вместо свечений и blur-панелей */
+/* Мягкие рассеянные тени вместо свечений и blur-панелей.
+   В тёмной теме глубина чуть мягче — на тёмном фоне тени
+   «залипают» сильнее, компенсируем прозрачностью. */
 .shadow-soft {
   box-shadow:
     0 1px 2px rgba(41, 37, 33, 0.05),
     0 16px 40px -12px rgba(41, 37, 33, 0.12);
+}
+.dark .shadow-soft {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 16px 40px -12px rgba(0, 0, 0, 0.45);
 }
 .shadow-soft-sm {
   box-shadow:
     0 1px 2px rgba(41, 37, 33, 0.06),
     0 6px 16px -6px rgba(41, 37, 33, 0.1);
 }
+.dark .shadow-soft-sm {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 6px 16px -6px rgba(0, 0, 0, 0.4);
+}
 .shadow-soft-lg {
   box-shadow:
     0 2px 4px rgba(41, 37, 33, 0.06),
     0 28px 64px -16px rgba(41, 37, 33, 0.18);
+}
+.dark .shadow-soft-lg {
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.35),
+    0 28px 64px -16px rgba(0, 0, 0, 0.55);
 }
 
 /* Появление карточек: мягкий подъём с проявлением */
@@ -158,7 +220,7 @@ html {
   animation: paper-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Тонкий скроллбар под светлую тему */
+/* Тонкий скроллбар под светлую и тёмную тему */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -172,6 +234,12 @@ html {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(41, 37, 33, 0.3);
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 253, 248, 0.16);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 253, 248, 0.28);
 }
 
 /* Печать: лист метки на белом фоне */
