@@ -391,8 +391,8 @@ export function renderMarkerDataUrl(design: MarkerDesign, params: DrawParams): s
   return canvas.toDataURL("image/png");
 }
 
-/** Безопасное имя файла для скачивания */
-export function markerFileName(name: string, id: string): string {
+/** Безопасное имя файла для скачивания (PNG по умолчанию, PDF для листа) */
+export function markerFileName(name: string, id: string, ext: "png" | "pdf" = "png"): string {
   const base =
     name
       .trim()
@@ -400,5 +400,5 @@ export function markerFileName(name: string, id: string): string {
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 40) || id || "метка";
-  return `${base}.png`;
+  return `${base}.${ext}`;
 }

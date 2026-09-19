@@ -12,11 +12,14 @@ mkdir -p scripts/prod-deploy
 cp -r .next/standalone scripts/prod-deploy/standalone
 rm -rf scripts/prod-deploy/standalone/.next/static
 cp -r .next/static scripts/prod-deploy/standalone/.next/static
-# public уже внутри standalone (Next 15), страховочная проверка:
-if [ ! -d scripts/prod-deploy/standalone/public ]; then
-  cp -r public scripts/prod-deploy/standalone/public
-fi
-echo "snapshot ok: $(ls scripts/prod-deploy/standalone | tr '\n' ' ')"
+# public НЕ полагаемся на содержимое standalone — синкаем свежим целиком
+# (иконки/манифест/sw.js появляются без пересборки HTML)
+rm -rf scripts/prod-deploy/standalone/public
+cp -r public scripts/prod-deploy/standalone/public
+# версия кеша SW = BUILD_ID: каждый деплой открывает свежий кеш, старый подчищается
+BID=$(cat .next/BUILD_ID)
+sed -i "s/__BUILD_ID__/$BID/" scripts/prod-deploy/standalone/public/sw.js
+echo "snapshot ok: $(ls scripts/prod-deploy/standalone | tr '\n' ' ') + public($(ls public | wc -l)) + sw-version:$BID"
 
 echo "=== 3. Рестарт сервера ==="
 # pid по слушателю порта 3000 (не по cmdline — урок Task 15)

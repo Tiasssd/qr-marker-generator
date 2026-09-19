@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   Dialog,
   DialogContent,
@@ -50,28 +49,25 @@ import {
   markerFileName,
   renderMarkerDataUrl,
   type MarkerConfig,
-  type MarkerDesign,
 } from "@/lib/marker";
-import { Copy, Download, History, Maximize2, Printer, Shapes, Trash2, Type, X } from "lucide-react";
+import { Copy, Download, FileDown, History, Maximize2, Search, SearchX, Shapes, Trash2, Type, X } from "lucide-react";
 
 const HISTORY_KEY = "ar-marker-studio:history:v2";
 const EXPORT_SIZE = 2048;
 
-/** Задание на печать: одна метка или лист со всеми метками из истории */
-interface PrintJob {
-  /** data-URL картинок меток */
-  images: string[];
-  /** Понятные подписи (названия) — для alt */
-  labels: string[];
-  /** Физическая ширина одной метки на бумаге, см */
-  sizeCm: number;
-  /** true — лист A4 со всеми метками сеткой 2 колонки */
-  batch: boolean;
-}
-
 function signature(it: MarkerConfig): string {
   // ID и есть идентичность метки: «Молния» и «молния» — один и тот же узор
   return it.id;
+}
+
+/* Декодирование data-URL в Image — для пропорций при раскладке на листе A4 */
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Не удалось декодировать картинку метки"));
+    img.src = url;
+  });
 }
 
 /* История: v2 (ID выводится из названия) с миграцией из v1 */
@@ -107,8 +103,7 @@ export function MarkerStudio() {
   const [name, setName] = useState("");
   const [printSizeCm, setPrintSizeCm] = useState(16);
   const [history, setHistory] = useState<HistoryItem[]>(() => loadHistory());
-  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
-  const [printLoaded, setPrintLoaded] = useState(0);
+  const [historyQuery, setHistoryQuery] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [fontsReady, setFontsReady] = useState(false);
 
@@ -122,6 +117,13 @@ export function MarkerStudio() {
   const id = useMemo(() => deriveId(name), [name]);
   const design = useMemo(() => (id ? createMarkerDesign(id) : null), [id]);
 
+  /* Живой поиск по истории: считаем один раз на каждое изменение фильтра */
+  const filteredHistory = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    if (!q) return history;
+    return history.filter((it) => it.name.toLowerCase().includes(q));
+  }, [history, historyQuery]);
+
   /* Перерисовка предпросмотра после загрузки шрифтов */
   useEffect(() => {
     const fonts = document.fonts;
@@ -131,31 +133,9 @@ export function MarkerStudio() {
       .catch(() => undefined);
   }, []);
 
-  /* Печать стартует, только когда все картинки задания декодированы */
-  useEffect(() => {
-    if (!printJob || printLoaded < printJob.images.length) return;
-    const t = window.setTimeout(() => window.print(), 150);
-    return () => window.clearTimeout(t);
-  }, [printJob, printLoaded]);
-
-  /* Страховка: если картинка не декодируется — печатаем через 2.5 с что есть */
-  useEffect(() => {
-    if (!printJob || printLoaded >= printJob.images.length) return;
-    const total = printJob.images.length;
-    const t = window.setTimeout(() => setPrintLoaded(total), 2500);
-    return () => window.clearTimeout(t);
-  }, [printJob, printLoaded]);
-
-  /* После закрытия диалога печати освобождаем память (data-URL) */
-  useEffect(() => {
-    if (!printJob) return;
-    const cleanup = (): void => {
-      setPrintJob(null);
-      setPrintLoaded(0);
-    };
-    window.addEventListener("afterprint", cleanup);
-    return () => window.removeEventListener("afterprint", cleanup);
-  }, [printJob]);
+  /* Печать удалена: вместо window.print скачивается готовый PDF —
+     физический размер в мм задаётся при раскладке, никакой зависимости
+     от настроек диалога печати браузера */
 
   /* Сохранение истории между сессиями */
   useEffect(() => {
@@ -268,7 +248,8 @@ export function MarkerStudio() {
     }
   };
 
-  const handlePrint = (): void => {
+  /** PDF с одной меткой: лист A4, точный физический размер из селектора */
+  const handlePdf = async (): Promise<void> => {
     if (!name.trim() || !design) {
       toast({
         title: "Введите название",
@@ -278,26 +259,82 @@ export function MarkerStudio() {
       });
       return;
     }
-    const url = renderMarkerDataUrl(design, { name, id, size: 1600, dpr: 1 });
-    setPrintLoaded(0);
-    setPrintJob({ images: [url], labels: [name.trim()], sizeCm: printSizeCm, batch: false });
+    try {
+      /* jsPDF подтягивается динамически — в основном бандле его нет */
+      const { jsPDF } = await import("jspdf");
+      const url = renderMarkerDataUrl(design, { name, id, size: EXPORT_SIZE, dpr: 1 });
+      const img = await loadImage(url);
+      const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
+      const w = printSizeCm * 10;
+      const h = w * (img.naturalHeight / img.naturalWidth);
+      pdf.addImage(url, "PNG", (210 - w) / 2, (297 - h) / 2, w, h);
+      pdf.setProperties({ title: `AR-marker ${id}` });
+      saveBlob(pdf.output("blob"), markerFileName(name, id, "pdf"));
+      toast({
+        title: "PDF сохранён",
+        description: `Метка «${name.trim()}» — ${printSizeCm} см на листе A4.`,
+        variant: "success",
+        duration: 3000,
+      });
+    } catch {
+      toast({ title: "Не удалось создать PDF", variant: "destructive", duration: 3500 });
+    }
   };
 
-  /** Лист A4 со всеми метками из истории — сетка 2 колонки */
-  const handlePrintAll = (): void => {
+  /** PDF-лист A4 со всеми метками из истории — сетка 2 колонки по 8.5 см */
+  const handlePdfAll = (): void => {
     if (history.length === 0) return;
-    const jobs = history
-      .map((it) => ({ it, design: createMarkerDesign(it.id) }))
-      .filter((j): j is { it: HistoryItem; design: MarkerDesign } => j.design !== null);
-    setPrintJob({
-      images: jobs.map((j) =>
-        renderMarkerDataUrl(j.design, { name: j.it.name, id: j.it.id, size: 1100, dpr: 1 })
-      ),
-      labels: jobs.map((j) => j.it.name),
-      sizeCm: 8.5,
-      batch: true,
-    });
-    setPrintLoaded(0);
+    void (async () => {
+      try {
+        const { jsPDF } = await import("jspdf");
+        const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
+        const w = 85; // 8.5 см — 4 метки на страницу A4
+        const margin = 12;
+        const gapY = 14;
+        const xs = [margin, 210 - margin - w];
+        let col = 0;
+        let y = margin;
+        let placed = 0;
+        for (const it of history) {
+          const itemDesign = createMarkerDesign(it.id);
+          if (!itemDesign) continue;
+          const url = renderMarkerDataUrl(itemDesign, {
+            name: it.name,
+            id: it.id,
+            size: 1100,
+            dpr: 1,
+          });
+          const img = await loadImage(url);
+          const h = w * (img.naturalHeight / img.naturalWidth);
+          /* не влезла по высоте — в соседнюю колонку, дальше на новый лист */
+          if (y + h > 297 - margin) {
+            if (col === 0) {
+              col = 1;
+              y = margin;
+            } else {
+              pdf.addPage();
+              col = 0;
+              y = margin;
+            }
+          }
+          pdf.addImage(url, "PNG", xs[col], y, w, h);
+          y += h + gapY;
+          placed++;
+        }
+        if (placed > 0) {
+          pdf.setProperties({ title: "AR markers sheet" });
+          saveBlob(pdf.output("blob"), markerFileName("Лист меток", "", "pdf"));
+          toast({
+            title: "PDF со всеми метками сохранён",
+            description: `${placed} шт. по 8.5 см, лист A4.`,
+            variant: "success",
+            duration: 3000,
+          });
+        }
+      } catch {
+        toast({ title: "Не удалось создать PDF", variant: "destructive", duration: 3500 });
+      }
+    })();
   };
 
   const loadItem = (item: HistoryItem): void => {
@@ -341,8 +378,6 @@ export function MarkerStudio() {
     toast({ title: "История очищена", duration: 3000 });
   };
 
-  const markImgLoaded = (): void => setPrintLoaded((n) => n + 1);
-
   const copyId = async (value: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(value);
@@ -352,46 +387,10 @@ export function MarkerStudio() {
     }
   };
 
-  const printSheet = printJob
-    ? createPortal(
-        printJob.batch ? (
-          /* Лист всех меток: обычный поток — многостраничная печать работает сама */
-          <div className="hidden bg-white print:block">
-            <div className="mx-auto grid w-fit grid-cols-2 gap-x-[1cm] gap-y-[1cm] py-[0.5cm]">
-              {printJob.images.map((url, i) => (
-                <figure key={i} className="m-0 break-inside-avoid">
-                  <img
-                    src={url}
-                    alt={`Метка ${printJob.labels[i]} для печати`}
-                    style={{ width: `${printJob.sizeCm}cm`, height: "auto" }}
-                    onLoad={markImgLoaded}
-                    onError={markImgLoaded}
-                  />
-                </figure>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="fixed inset-0 z-[100] hidden items-center justify-center bg-white print:flex">
-            <img
-              src={printJob.images[0]}
-              alt={`Метка ${printJob.labels[0]} для печати`}
-              style={{ width: `${printJob.sizeCm}cm`, height: "auto" }}
-              onLoad={markImgLoaded}
-              onError={markImgLoaded}
-            />
-          </div>
-        ),
-        document.body
-      )
-    : null;
-
   const downloadDisabled = !name.trim();
 
   return (
     <>
-      {printSheet}
-
       <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(340px,420px)_1fr] lg:items-start">
         {/* Панель метки (тянется на высоту своей строки — без щелей под карточкой) */}
         <Card className="anim-rise rounded-[28px] border-stone-200/80 bg-white shadow-soft lg:col-start-1 lg:row-start-1 lg:h-full">
@@ -460,12 +459,13 @@ export function MarkerStudio() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={handlePrint}
+                onClick={() => void handlePdf()}
                 disabled={downloadDisabled}
+                title="Скачать PDF: лист A4 с точным размером метки"
                 className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
               >
-                <Printer className="size-5" aria-hidden="true" />
-                Печать
+                <FileDown className="size-5" aria-hidden="true" />
+                PDF
               </Button>
             </div>
 
@@ -615,12 +615,12 @@ export function MarkerStudio() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={handlePrintAll}
-                  title="Распечатать лист со всеми метками"
+                  onClick={handlePdfAll}
+                  title="Скачать лист A4 со всеми метками (8.5 см)"
                   className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700"
                 >
-                  <Printer className="size-4" aria-hidden="true" />
-                  Печать всех
+                  <FileDown className="size-4" aria-hidden="true" />
+                  PDF всех
                 </Button>
                 <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
                   <AlertDialogTrigger asChild>
@@ -660,7 +660,24 @@ export function MarkerStudio() {
             )}
           </div>
 
-          <CardContent className="flex min-h-0 flex-1 flex-col px-5 py-4">
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
+            {/* Поиск по названию: появляется, когда список реально длинный */}
+            {history.length >= 6 && (
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400"
+                  aria-hidden="true"
+                />
+                <input
+                  type="search"
+                  value={historyQuery}
+                  onChange={(e) => setHistoryQuery(e.target.value)}
+                  placeholder="Поиск по названию"
+                  aria-label="Поиск по названию метки"
+                  className="h-10 w-full rounded-full border border-stone-200 bg-stone-50/80 pl-9 pr-4 text-sm text-stone-900 placeholder:text-stone-400 caret-orange-600 focus-visible:border-stone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50"
+                />
+              </div>
+            )}
             {history.length === 0 ? (
               /* Тихая центрированная подсказка вместо большой пустой коробки */
               <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center">
@@ -669,9 +686,17 @@ export function MarkerStudio() {
                   Скачайте первую метку — она появится здесь
                 </p>
               </div>
+            ) : filteredHistory.length === 0 ? (
+              /* Запрос ничего не нашёл — тихое состояние, без коробки-громилы */
+              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center">
+                <SearchX className="size-6 text-stone-300" aria-hidden="true" />
+                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500">
+                  Ничего не найдено по «{historyQuery.trim()}»
+                </p>
+              </div>
             ) : (
               <ul className="flex list-none flex-col gap-3 lg:max-h-[65vh] lg:overflow-y-auto lg:overscroll-contain lg:pr-1.5">
-                {history.map((item, i) => (
+                {filteredHistory.map((item, i) => (
                   <li key={item.ts}>
                     <HistoryCard
                       item={item}

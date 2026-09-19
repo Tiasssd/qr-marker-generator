@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { ServiceWorkerRegister } from "@/components/pwa/sw-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,8 +19,19 @@ export const metadata: Metadata = {
   description:
     "Генератор трекер-меток: название над узором, жирная рамка и крупная матрица 5×5 — уникальный узор выводится из названия и различается камерой даже при слабом освещении.",
   keywords: ["AR-метка", "трекер", "3D-модель", "генератор меток", "marker", "tracking"],
+  manifest: "/manifest.webmanifest",
+  applicationName: "Генератор AR-меток",
+  appleWebApp: {
+    capable: true,
+    title: "AR-метки",
+    statusBarStyle: "default",
+  },
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: [
+      { url: "/icons/favicon.svg", type: "image/svg+xml" },
+      { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   openGraph: {
     title: "Генератор AR-меток — трекер-метки для 3D-машинок",
@@ -28,6 +40,11 @@ export const metadata: Metadata = {
     siteName: "Генератор AR-меток",
     type: "website",
   },
+};
+
+/** PWA: тёплый светлый интерфейс — рамки и статус-бар в тон фона */
+export const viewport: Viewport = {
+  themeColor: "#FBFAF7",
 };
 
 export default function RootLayout({
@@ -45,6 +62,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         {children}
+        <ServiceWorkerRegister />
         <div className="print:hidden">
           <Toaster />
         </div>

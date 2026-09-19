@@ -3,7 +3,7 @@ import { ScanLine } from "lucide-react";
 
 export default function Home() {
   return (
-    <div className="relative flex min-h-screen flex-col bg-background text-foreground print:hidden">
+    <div className="relative flex min-h-screen flex-col bg-background text-foreground">
       {/* Шапка */}
       <header className="sticky top-0 z-40 border-b border-stone-200/70 bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3.5 px-4 sm:px-6">
