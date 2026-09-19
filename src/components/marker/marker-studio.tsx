@@ -1,12 +1,21 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,14 +38,8 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ToastAction } from "@/components/ui/toast";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useToast } from "@/hooks/use-toast";
 import { HistoryCard, type HistoryItem } from "@/components/marker/history-card";
 import {
@@ -49,7 +52,7 @@ import {
   type MarkerConfig,
   type MarkerDesign,
 } from "@/lib/marker";
-import { Download, History, Printer, Shapes, Trash2 } from "lucide-react";
+import { Copy, Download, History, Maximize2, Printer, ScanLine, Shapes, Trash2, X } from "lucide-react";
 
 const HISTORY_KEY = "ar-marker-studio:history:v2";
 const EXPORT_SIZE = 2048;
@@ -110,6 +113,9 @@ export function MarkerStudio() {
   const [fontsReady, setFontsReady] = useState(false);
 
   const previewRef = useRef<HTMLCanvasElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const zoomRef = useRef<HTMLCanvasElement>(null);
+  const [zoomOpen, setZoomOpen] = useState(false);
 
   /* ID выводится из названия: разное название — другой узор,
      то же название — та же метка (перепечатка не ломает привязку) */
@@ -171,6 +177,50 @@ export function MarkerStudio() {
     });
   }, [design, name, id, fontsReady]);
 
+  /* Заголовок вкладки отражает текущую метку */
+  useEffect(() => {
+    const trimmed = name.trim();
+    document.title = trimmed
+      ? `Метка «${trimmed}» — Генератор AR-меток`
+      : "Генератор AR-меток — трекер-метки для 3D-машинок";
+  }, [name]);
+
+  /* Липкая мобильная панель резервирует место внизу страницы (body padding),
+     чтобы подвал не оказывался под ней; на десктопе и печати — без резерва */
+  useEffect(() => {
+    if (!design) return;
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const apply = (): void => {
+      const bar = document.querySelector<HTMLElement>(".marker-sticky-bar");
+      document.body.style.paddingBottom =
+        mq.matches && bar ? `${bar.offsetHeight + 1}px` : "";
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => {
+      mq.removeEventListener("change", apply);
+      document.body.style.paddingBottom = "";
+    };
+  }, [design]);
+
+  /* Крупный вид в модалке. Портал диалога монтируется ПОЗЖЕ срабатывания
+     эффекта с zoomOpen, поэтому рисуем прямо в ref-callback: он вызывается
+     в момент реального появления канваса в DOM (и при смене названия) */
+  const drawZoom = useCallback(
+    (canvas: HTMLCanvasElement | null): void => {
+      zoomRef.current = canvas;
+      if (canvas && design) {
+        drawMarker(canvas, design, {
+          name,
+          id,
+          size: 1100,
+          dpr: Math.min(window.devicePixelRatio || 1, 2),
+        });
+      }
+    },
+    [design, name, id, fontsReady]
+  );
+
   const addToHistory = (config: MarkerConfig): void => {
     setHistory((prev) => {
       const sig = signature(config);
@@ -209,6 +259,7 @@ export function MarkerStudio() {
       toast({
         title: "PNG сохранён",
         description: `Метка «${name.trim()}» — 2048 px по ширине.`,
+        variant: "success",
         duration: 3000,
       });
     } catch {
@@ -250,7 +301,7 @@ export function MarkerStudio() {
 
   const loadItem = (item: HistoryItem): void => {
     setName(item.name);
-    toast({ title: "Метка загружена", description: `«${item.name}»`, duration: 2500 });
+    toast({ title: "Метка загружена", description: `«${item.name}»`, variant: "success", duration: 2500 });
   };
 
   const downloadItem = async (item: HistoryItem): Promise<void> => {
@@ -259,7 +310,7 @@ export function MarkerStudio() {
       if (!itemDesign) throw new Error("Пустой ID метки");
       const blob = await exportMarkerPng(itemDesign, { name: item.name, id: item.id, size: EXPORT_SIZE, dpr: 1 });
       saveBlob(blob, markerFileName(item.name, item.id));
-      toast({ title: "PNG сохранён", description: `Метка «${item.name}».`, duration: 2500 });
+      toast({ title: "PNG сохранён", description: `Метка «${item.name}».`, variant: "success", duration: 2500 });
     } catch {
       toast({ title: "Не удалось создать PNG", variant: "destructive", duration: 3500 });
     }
@@ -290,6 +341,15 @@ export function MarkerStudio() {
   };
 
   const markImgLoaded = (): void => setPrintLoaded((n) => n + 1);
+
+  const copyId = async (value: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast({ title: "ID скопирован", description: value, variant: "success", duration: 2000 });
+    } catch {
+      toast({ title: "Не удалось скопировать ID", variant: "destructive", duration: 2500 });
+    }
+  };
 
   const printSheet = printJob
     ? createPortal(
@@ -333,24 +393,53 @@ export function MarkerStudio() {
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(320px,400px)_1fr]">
         {/* Панель метки */}
-        <Card className="border-white/10 bg-neutral-900/60 backdrop-blur">
+        <Card className="anim-rise border-white/10 bg-neutral-900/60 backdrop-blur">
           <CardContent className="space-y-5 pt-6">
             {/* Название — единственный ввод: задаёт и подпись, и уникальный узор */}
             <div className="space-y-2">
-              <Label htmlFor="marker-name" className="text-neutral-200">
-                Название метки
-              </Label>
-              <Input
-                id="marker-name"
-                value={name}
-                maxLength={60}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleDownload();
-                }}
-                placeholder="Например: Красная спортивная"
-                className="h-12 border-white/10 bg-neutral-950/70 text-neutral-100 placeholder:text-neutral-600 focus-visible:ring-amber-500/40"
-              />
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="marker-name" className="text-neutral-200">
+                  Название метки
+                </Label>
+                {/* Счётчик виден только у самого лимита — не захламляет обычный ввод */}
+                {name.length >= 45 && (
+                  <span
+                    aria-live="polite"
+                    className={`font-mono text-xs tabular-nums ${
+                      name.length >= 58 ? "text-amber-400" : "text-neutral-400"
+                    }`}
+                  >
+                    {name.length} / 60
+                  </span>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  id="marker-name"
+                  ref={nameInputRef}
+                  value={name}
+                  maxLength={60}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleDownload();
+                  }}
+                  placeholder="Например: Красная спортивная"
+                  className="h-12 border-white/10 bg-neutral-950/70 pr-11 caret-amber-400 text-neutral-100 placeholder:text-neutral-600 focus-visible:ring-amber-500/40"
+                />
+                {name.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setName("");
+                      nameInputRef.current?.focus();
+                    }}
+                    aria-label="Очистить название"
+                    className="absolute inset-y-0 right-3 my-auto grid size-7 place-items-center rounded-md text-neutral-400 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Действия */}
@@ -381,56 +470,91 @@ export function MarkerStudio() {
               <Label htmlFor="marker-print-size" className="text-neutral-200">
                 Размер при печати
               </Label>
-              <Select value={String(printSizeCm)} onValueChange={(v) => setPrintSizeCm(Number(v))}>
-                <SelectTrigger
-                  id="marker-print-size"
-                  className="h-11 w-full border-white/10 bg-neutral-950/70 text-neutral-100 focus-visible:ring-amber-500/40"
-                  aria-label="Размер при печати"
-                >
-                  <SelectValue placeholder="Размер метки" />
-                </SelectTrigger>
-                <SelectContent className="border-white/10 bg-neutral-900 text-neutral-100">
-                  <SelectItem value="10">10 см</SelectItem>
-                  <SelectItem value="13">13 см</SelectItem>
-                  <SelectItem value="16">16 см</SelectItem>
-                </SelectContent>
-              </Select>
+              <ToggleGroup
+                id="marker-print-size"
+                type="single"
+                variant="outline"
+                value={String(printSizeCm)}
+                onValueChange={(v) => {
+                  if (v) setPrintSizeCm(Number(v));
+                }}
+                aria-label="Размер при печати"
+                className="h-11 w-full"
+              >
+                {[10, 13, 16].map((cm) => (
+                  <ToggleGroupItem
+                    key={cm}
+                    value={String(cm)}
+                    aria-label={`${cm} сантиметров`}
+                    className="h-11 flex-1 border-white/15 bg-neutral-950/70 px-2 text-sm text-neutral-300 transition-colors hover:bg-white/10 hover:text-white data-[state=on]:border-amber-500/40 data-[state=on]:bg-amber-500/15 data-[state=on]:text-amber-300 data-[state=on]:hover:bg-amber-500/20 focus-visible:ring-amber-500/40"
+                  >
+                    {cm} см
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
             </div>
           </CardContent>
         </Card>
 
         {/* Предпросмотр */}
-        <div className="lg:sticky lg:top-24">
+        <div className="anim-rise anim-rise-delay-1 lg:sticky lg:top-24">
           <Card className="border-white/10 bg-neutral-900/60 backdrop-blur">
             <CardHeader>
               <CardTitle className="text-lg text-neutral-100">Предпросмотр</CardTitle>
               <CardAction>
-                <span className="font-mono text-xs tracking-wider text-amber-400/90">
-                  {id || "—"}
-                </span>
+                {id ? (
+                  <button
+                    type="button"
+                    onClick={() => void copyId(id)}
+                    title="Скопировать ID"
+                    aria-label={`Скопировать ID ${id}`}
+                    className="-mx-1 inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 font-mono text-xs tracking-wider text-amber-400/90 transition-colors hover:bg-amber-500/10 hover:text-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+                  >
+                    {id}
+                    <Copy className="size-3.5 opacity-60" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <span className="font-mono text-xs tracking-wider text-amber-400/90">—</span>
+                )}
               </CardAction>
             </CardHeader>
             <CardContent>
-              <div className="mx-auto max-w-[440px] overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/50 ring-1 ring-white/10">
-                {design ? (
+              {design ? (
+                <button
+                  type="button"
+                  onClick={() => setZoomOpen(true)}
+                  title="Открыть метку крупно"
+                  aria-label="Открыть метку крупно"
+                  className="anim-paper group/zoom relative mx-auto block max-w-[440px] cursor-zoom-in overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/50 ring-1 ring-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
+                >
                   <canvas
                     ref={previewRef}
                     className="block h-auto w-full"
                     aria-label="Предпросмотр метки"
                   />
-                ) : (
-                  <div className="grid aspect-square place-items-center px-6 text-center text-sm text-neutral-600">
-                    Введите название метки
+                  {/* Подсказка зума: появляется при наведении */}
+                  <span className="pointer-events-none absolute right-3 top-3 grid size-8 place-items-center rounded-full bg-neutral-950/70 text-white opacity-0 transition-opacity duration-200 group-hover/zoom:opacity-100">
+                    <Maximize2 className="size-4" aria-hidden="true" />
+                  </span>
+                </button>
+              ) : (
+                /* Пустое состояние: рамка-заготовка вместо пустой белой бумаги */
+                <div className="mx-auto grid aspect-square max-w-[440px] place-items-center rounded-xl border-2 border-dashed border-white/15 bg-neutral-900/30 px-6 text-center">
+                  <div>
+                    <ScanLine className="mx-auto size-10 text-neutral-500" aria-hidden="true" />
+                    <p className="mt-3 text-sm text-neutral-400">
+                      Введите название — здесь появится метка
+                    </p>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
       </div>
 
       {/* История */}
-      <section className="mt-10" aria-labelledby="history-heading">
+      <section className="anim-rise anim-rise-delay-2 mt-10" aria-labelledby="history-heading">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-3">
           <div className="flex items-center gap-2.5">
             <History className="size-4 text-amber-400" aria-hidden="true" />
@@ -500,10 +624,11 @@ export function MarkerStudio() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {history.map((item) => (
+            {history.map((item, i) => (
               <HistoryCard
                 key={item.ts}
                 item={item}
+                index={i}
                 onDownload={downloadItem}
                 onLoad={loadItem}
                 onDelete={deleteItem}
@@ -512,6 +637,56 @@ export function MarkerStudio() {
           </div>
         )}
       </section>
+
+      {/* Мобильная липкая панель: скачать, не прокручивая наверх */}
+      {design && (
+        <div className="marker-sticky-bar fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-neutral-950/90 pb-[env(safe-area-inset-bottom)] backdrop-blur print:hidden lg:hidden">
+          <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-neutral-100" title={name}>
+                {name}
+              </div>
+              <div className="font-mono text-xs tracking-wider text-amber-400/90">{id}</div>
+            </div>
+            <Button
+              type="button"
+              onClick={handleDownload}
+              className="h-11 shrink-0 bg-amber-500 px-5 font-semibold text-neutral-950 shadow-lg shadow-amber-500/20 hover:bg-amber-400"
+            >
+              <Download className="size-5" aria-hidden="true" />
+              Скачать
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Крупный просмотр метки */}
+      <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
+        <DialogContent className="max-w-[min(92vw,720px)] border-white/10 bg-neutral-900 p-4 sm:p-6">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Метка крупно</DialogTitle>
+            <DialogDescription>Увеличенный предпросмотр метки</DialogDescription>
+          </DialogHeader>
+          <div className="mx-auto w-full max-w-[640px] overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/50">
+            <canvas
+              ref={drawZoom}
+              className="block h-auto w-full"
+              aria-label="Увеличенный предпросмотр метки"
+            />
+          </div>
+          <DialogFooter className="mt-1 sm:justify-center">
+            <Button
+              type="button"
+              onClick={handleDownload}
+              disabled={downloadDisabled}
+              className="h-11 bg-amber-500 text-base font-semibold text-neutral-950 shadow-lg shadow-amber-500/20 hover:bg-amber-400 disabled:pointer-events-none disabled:opacity-40"
+            >
+              <Download className="size-5" aria-hidden="true" />
+              Скачать PNG
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Скрытая подсказка для скринридеров о назначении меток */}
       <p className="sr-only">

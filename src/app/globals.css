@@ -121,6 +121,16 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Выделение текста в тон акценту приложения */
+  ::selection {
+    background: rgba(251, 191, 36, 0.35);
+    color: #fff;
+  }
+}
+
+/* Стабильная полоса прокрутки — без микросдвигов при росте контента */
+html {
+  scrollbar-gutter: stable;
 }
 
 /* ---------- Оформление студии AR-меток ---------- */
@@ -140,6 +150,42 @@
   background-size: 44px 44px;
   mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, black 25%, transparent 78%);
   -webkit-mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, black 25%, transparent 78%);
+}
+
+/* Появление карточек: мягкий подъём с проявлением */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.anim-rise {
+  animation: rise-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.anim-rise-delay-1 {
+  animation-delay: 0.08s;
+}
+.anim-rise-delay-2 {
+  animation-delay: 0.16s;
+}
+
+/* Материализация белой бумаги метки при вводе названия */
+@keyframes paper-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.anim-paper {
+  animation: paper-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* Тонкий скроллбар под тёмную тему */
@@ -162,6 +208,10 @@
 @media print {
   @page {
     margin: 12mm;
+  }
+  /* Мобильная липкая панель скрыта — резерв места тоже сбрасываем */
+  body {
+    padding-bottom: 0 !important;
   }
 }
 
