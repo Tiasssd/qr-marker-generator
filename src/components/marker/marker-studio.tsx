@@ -52,7 +52,7 @@ import {
   type MarkerConfig,
   type MarkerDesign,
 } from "@/lib/marker";
-import { Copy, Download, History, Maximize2, Printer, ScanLine, Shapes, Trash2, Type, X } from "lucide-react";
+import { Copy, Download, History, Maximize2, Printer, Shapes, Trash2, Type, X } from "lucide-react";
 
 const HISTORY_KEY = "ar-marker-studio:history:v2";
 const EXPORT_SIZE = 2048;
@@ -552,13 +552,13 @@ export function MarkerStudio() {
                   </button>
                 </div>
               ) : (
-                /* Пустое состояние: компактный онбординг из трёх шагов —
+                /* Пустое состояние: компактный онбординг из двух шагов —
                    вместо высокой пустой заглушки */
                 <div className="mx-auto flex w-full max-w-[480px] flex-1 flex-col justify-center gap-4 rounded-[24px] border-2 border-dashed border-stone-300/80 bg-stone-100/60 p-5 sm:p-6">
                   <p className="text-center text-xs font-medium text-stone-500">
                     Как это работает
                   </p>
-                  <ol className="grid list-none gap-2.5 sm:grid-cols-3">
+                  <ol className="grid list-none gap-2.5 sm:grid-cols-2">
                     {[
                       {
                         icon: Type,
@@ -570,11 +570,6 @@ export function MarkerStudio() {
                         title: "Скачайте и распечатайте",
                         text: "PNG или печать на белой бумаге",
                       },
-                      {
-                        icon: ScanLine,
-                        title: "Наведите камеру",
-                        text: "На метке появится 3D-машина",
-                      },
                     ].map((step) => (
                       <li
                         key={step.title}
@@ -584,10 +579,10 @@ export function MarkerStudio() {
                           <step.icon className="size-4" aria-hidden="true" />
                         </span>
                         <span className="min-w-0">
-                          <span className="block text-[13px] font-medium leading-snug text-stone-800">
+                          <span className="block text-[13px] font-medium leading-snug text-stone-800 break-words">
                             {step.title}
                           </span>
-                          <span className="mt-1 block text-xs leading-snug text-stone-500">
+                          <span className="mt-1 block text-xs leading-snug text-stone-500 break-words">
                             {step.text}
                           </span>
                         </span>

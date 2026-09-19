@@ -37,7 +37,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" suppressHydrationWarning>
+      {/* suppressHydrationWarning: расширения браузера вписывают атрибуты
+          в body до гидрации (React рапортует hydration mismatch) — глушим
+          на этом уровне; на контент детей это не влияет */}
       <body
+        suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         {children}
