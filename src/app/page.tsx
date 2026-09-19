@@ -20,8 +20,8 @@ export default function Home() {
             <h1 className="truncate text-sm font-semibold uppercase tracking-widest">
               Генератор AR-меток
             </h1>
-            <div className="mt-0.5 truncate text-xs text-neutral-400">
-              Трекерные QR для спавна 3D-машинок
+            <div className="mt-0.5 truncate text-xs text-neutral-300">
+              Трекер-метки для спавна 3D-машинок
             </div>
           </div>
         </div>
@@ -33,11 +33,9 @@ export default function Home() {
 
       {/* Подвал */}
       <footer className="relative z-10 mt-auto border-t border-white/10 bg-neutral-950/60">
-        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-5 text-xs text-neutral-400 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-5 text-xs text-neutral-300 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <span>Метки генерируются локально в браузере.</span>
-          <span className="shrink-0">
-            QR Code — зарегистрированный товарный знак DENSO WAVE INCORPORATED
-          </span>
+          <span className="shrink-0">У каждой метки — уникальный узор из названия</span>
         </div>
       </footer>
     </div>

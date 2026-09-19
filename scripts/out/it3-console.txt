@@ -1,0 +1,38 @@
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 382ms
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 160ms
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 167ms
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 188ms
+[log] [Fast Refresh] rebuilding
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 196ms
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 101ms
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 160ms
+[log] [Fast Refresh] rebuilding
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 283ms
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 184ms
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 141ms
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected

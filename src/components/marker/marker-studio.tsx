@@ -40,15 +40,16 @@ import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { HistoryCard, type HistoryItem } from "@/components/marker/history-card";
 import {
-  createQrData,
+  createMarkerDesign,
   deriveId,
   drawMarker,
   exportMarkerPng,
   markerFileName,
   renderMarkerDataUrl,
   type MarkerConfig,
-} from "@/lib/qr-marker";
-import { Download, History, Printer, QrCode, Trash2 } from "lucide-react";
+  type MarkerDesign,
+} from "@/lib/marker";
+import { Download, History, Printer, Shapes, Trash2 } from "lucide-react";
 
 const HISTORY_KEY = "ar-marker-studio:history:v2";
 const EXPORT_SIZE = 2048;
@@ -113,7 +114,7 @@ export function MarkerStudio() {
   /* ID выводится из названия: разное название — другой узор,
      то же название — та же метка (перепечатка не ломает привязку) */
   const id = useMemo(() => deriveId(name), [name]);
-  const qr = useMemo(() => (id ? createQrData(id) : null), [id]);
+  const design = useMemo(() => (id ? createMarkerDesign(id) : null), [id]);
 
   /* Перерисовка предпросмотра после загрузки шрифтов */
   useEffect(() => {
@@ -161,14 +162,14 @@ export function MarkerStudio() {
 
   /* Живой предпросмотр метки */
   useEffect(() => {
-    if (!qr || !previewRef.current) return;
-    drawMarker(previewRef.current, qr, {
+    if (!design || !previewRef.current) return;
+    drawMarker(previewRef.current, design, {
       name,
       id,
       size: 660,
       dpr: Math.min(window.devicePixelRatio || 1, 2),
     });
-  }, [qr, name, id, fontsReady]);
+  }, [design, name, id, fontsReady]);
 
   const addToHistory = (config: MarkerConfig): void => {
     setHistory((prev) => {
@@ -192,17 +193,17 @@ export function MarkerStudio() {
   };
 
   const handleDownload = async (): Promise<void> => {
-    if (!name.trim() || !qr) {
+    if (!name.trim() || !design) {
       toast({
         title: "Введите название",
-        description: "Оно напечатается над кодом и задаст уникальный узор метки.",
+        description: "Оно напечатается над меткой и задаст уникальный узор.",
         variant: "destructive",
         duration: 3500,
       });
       return;
     }
     try {
-      const blob = await exportMarkerPng(qr, { name, id, size: EXPORT_SIZE, dpr: 1 });
+      const blob = await exportMarkerPng(design, { name, id, size: EXPORT_SIZE, dpr: 1 });
       saveBlob(blob, markerFileName(name, id));
       addToHistory({ name, id });
       toast({
@@ -216,16 +217,16 @@ export function MarkerStudio() {
   };
 
   const handlePrint = (): void => {
-    if (!name.trim() || !qr) {
+    if (!name.trim() || !design) {
       toast({
         title: "Введите название",
-        description: "Оно напечатается над кодом и задаст уникальный узор метки.",
+        description: "Оно напечатается над меткой и задаст уникальный узор.",
         variant: "destructive",
         duration: 3500,
       });
       return;
     }
-    const url = renderMarkerDataUrl(qr, { name, id, size: 1600, dpr: 1 });
+    const url = renderMarkerDataUrl(design, { name, id, size: 1600, dpr: 1 });
     setPrintLoaded(0);
     setPrintJob({ images: [url], labels: [name.trim()], sizeCm: printSizeCm, batch: false });
   };
@@ -233,16 +234,18 @@ export function MarkerStudio() {
   /** Лист A4 со всеми метками из истории — сетка 2 колонки */
   const handlePrintAll = (): void => {
     if (history.length === 0) return;
-    const images = history.map((it) =>
-      renderMarkerDataUrl(createQrData(it.id), { name: it.name, id: it.id, size: 1100, dpr: 1 })
-    );
-    setPrintLoaded(0);
+    const jobs = history
+      .map((it) => ({ it, design: createMarkerDesign(it.id) }))
+      .filter((j): j is { it: HistoryItem; design: MarkerDesign } => j.design !== null);
     setPrintJob({
-      images,
-      labels: history.map((it) => it.name),
+      images: jobs.map((j) =>
+        renderMarkerDataUrl(j.design, { name: j.it.name, id: j.it.id, size: 1100, dpr: 1 })
+      ),
+      labels: jobs.map((j) => j.it.name),
       sizeCm: 8.5,
       batch: true,
     });
+    setPrintLoaded(0);
   };
 
   const loadItem = (item: HistoryItem): void => {
@@ -252,8 +255,9 @@ export function MarkerStudio() {
 
   const downloadItem = async (item: HistoryItem): Promise<void> => {
     try {
-      const itemQr = createQrData(item.id);
-      const blob = await exportMarkerPng(itemQr, { name: item.name, id: item.id, size: EXPORT_SIZE, dpr: 1 });
+      const itemDesign = createMarkerDesign(item.id);
+      if (!itemDesign) throw new Error("Пустой ID метки");
+      const blob = await exportMarkerPng(itemDesign, { name: item.name, id: item.id, size: EXPORT_SIZE, dpr: 1 });
       saveBlob(blob, markerFileName(item.name, item.id));
       toast({ title: "PNG сохранён", description: `Метка «${item.name}».`, duration: 2500 });
     } catch {
@@ -339,7 +343,7 @@ export function MarkerStudio() {
               <Input
                 id="marker-name"
                 value={name}
-                maxLength={36}
+                maxLength={60}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void handleDownload();
@@ -408,7 +412,7 @@ export function MarkerStudio() {
             </CardHeader>
             <CardContent>
               <div className="mx-auto max-w-[440px] overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/50 ring-1 ring-white/10">
-                {qr ? (
+                {design ? (
                   <canvas
                     ref={previewRef}
                     className="block h-auto w-full"
@@ -489,7 +493,7 @@ export function MarkerStudio() {
 
         {history.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/15 bg-neutral-900/30 px-6 py-8 text-center">
-            <QrCode className="mx-auto size-8 text-neutral-600" aria-hidden="true" />
+            <Shapes className="mx-auto size-8 text-neutral-600" aria-hidden="true" />
             <p className="mt-3 text-sm text-neutral-400">
               Скачайте первую метку — она появится здесь.
             </p>

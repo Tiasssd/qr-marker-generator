@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "1. **Многоточие**: Да, название корректно завершается знаком «…» (три точки).\n2. **Налезание**: Нет, название не наезжает на рамку — между ними есть достаточный отступ.\n3. **Дефекты**: Визуальных дефектов (артефактов, обрезки текста, смещения элементов) не обнаружено. Рендер корректный.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1789807104,
+  "id": "20260919163816b52a5f0cdcdf4a60",
+  "model": "glm-5v-turbo",
+  "object": "chat.completion",
+  "request_id": "20260919163816b52a5f0cdcdf4a60",
+  "usage": {
+    "completion_tokens": 96,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 1755,
+    "prompt_tokens_details": {
+      "cached_tokens": 2
+    },
+    "total_tokens": 1851
+  }
+}

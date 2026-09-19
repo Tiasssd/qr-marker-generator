@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { createQrData, drawMarker, type MarkerConfig } from "@/lib/qr-marker";
+import { createMarkerDesign, drawMarker, type MarkerConfig } from "@/lib/marker";
 import { Download, RotateCcw, Trash2 } from "lucide-react";
 
 export interface HistoryItem extends MarkerConfig {
@@ -28,17 +28,17 @@ function formatDate(ts: number): string {
 /** Карточка сохранённой метки из истории с мини-превью */
 export function HistoryCard({ item, onDownload, onLoad, onDelete }: HistoryCardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const qr = useMemo(() => createQrData(item.id), [item.id]);
+  const design = useMemo(() => createMarkerDesign(item.id), [item.id]);
 
   useEffect(() => {
-    if (!canvasRef.current || !qr) return;
-    drawMarker(canvasRef.current, qr, {
+    if (!canvasRef.current || !design) return;
+    drawMarker(canvasRef.current, design, {
       name: item.name,
       id: item.id,
       size: 220,
       dpr: 1.5,
     });
-  }, [qr, item]);
+  }, [design, item]);
 
   return (
     <article className="group rounded-xl border border-white/10 bg-neutral-900/60 p-3 transition-colors hover:border-white/20">
@@ -55,7 +55,7 @@ export function HistoryCard({ item, onDownload, onLoad, onDelete }: HistoryCardP
             {item.name}
           </div>
           <div className="mt-1 font-mono text-xs tracking-wider text-amber-400/90">{item.id}</div>
-          <div className="mt-1 text-xs text-neutral-500">{formatDate(item.ts)}</div>
+          <div className="mt-1 text-xs text-neutral-400">{formatDate(item.ts)}</div>
         </div>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-1.5 opacity-70 transition-opacity group-hover:opacity-100">
