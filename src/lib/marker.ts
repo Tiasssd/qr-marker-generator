@@ -1,11 +1,17 @@
 /**
- * Движок трекер-меток «псевдо-QR».
+ * Движок трекер-меток в стиле «жирный ArUco» (по референсу пользователя).
  *
- * Вместо настоящего QR-кода (21×21 мелких модулей — с дальних дистанций
- * модули сливаются, и библиотека трекинга перестаёт различать метки)
- * генерируем «подобие» кода: сетка 9×9 крупных модулей, три якорных
- * «глаза», произвольный силуэт заливки и форма модулей.
- * Метка не декодируется — трекинг различает её по внешнему виду.
+ * Геометрия снята с референса попиксельно: квадратная метка со сплошной
+ * чёрной рамкой ~1.4 модуля, белой отбивкой ~1 модуль и плотной
+ * асимметричной матрицей 5×5. Модули прилегают вплотную — узор читается
+ * как единый битмап. Углы строго прямые, цвета чистые чёрный/белый.
+ * Сторона метки = 9.8 модуля, один модуль = 10.2% стороны — модуль QR V1
+ * был 3.4% стороны, наши крупнее почти втрое: с дальних дистанций
+ * узор не сливается.
+ *
+ * Метка не декодируется — библиотека трекинга различает её по внешнему
+ * виду. Узор поворотно-асимметричен: поворот метки не путает её саму
+ * с собой, камера всегда понимает ориентацию.
  *
  * Детерминизм: узор выводится из ID, ID — из названия.
  * Одно название — одна метка (перепечатка не ломает привязку),
@@ -30,42 +36,22 @@ export interface DrawParams extends MarkerConfig {
 
 /* ------------------------------ Геометрия -------------------------------- */
 
-/** Сетка узора: 9×9 при глазах 3×3 — глаз занимает треть стороны, как у QR V1 */
-const GRID = 9;
-/** Размер якорного «глаза» в модулях */
-const EYE = 3;
-/** Тихая зона в модулях с каждой стороны (модуль крупный, двух хватает с запасом) */
-const QUIET = 2;
-
-/** Углы якорных глаз: строка и столбец левого верхнего модуля глаза */
-const EYE_ANCHORS: ReadonlyArray<readonly [number, number]> = [
-  [0, 0],
-  [0, GRID - EYE],
-  [GRID - EYE, 0],
-];
-
-export type ModuleStyle = "soft" | "round" | "sharp" | "diamond";
-export type MaskKind = "full" | "disc" | "ring" | "diamond" | "cross";
+/** Матрица узора: 5×5 — максимально крупные модули при живом узоре */
+export const GRID = 5;
+/** Рамка в модулях — сплошная, жирная, как на референсе (14% стороны) */
+const BORDER = 1.4;
+/** Белая отбивка между рамкой и матрицей (в модулях) */
+const QUIET = 1;
+/** Сторона метки в модулях: рамка + отбивка + матрица + отбивка + рамка */
+const SIDE_MODULES = 2 * BORDER + 2 * QUIET + GRID; // 9.8
 
 /** Готовый узор метки: нарисовать можно сколько угодно раз — одинаково */
 export interface MarkerDesign {
-  /** Число модулей по стороне */
-  grid: number;
-  /** Форма модулей */
-  style: ModuleStyle;
-  /** Силуэт заливки */
-  mask: MaskKind;
-  /** Включённые ячейки заливки (индекс row * grid + col); ячейки глаз не входят */
+  /** Число модулей по стороне (всегда 5) */
+  grid: typeof GRID;
+  /** Тёмные ячейки матрицы (индекс row * grid + col) */
   cells: ReadonlySet<number>;
 }
-
-/** Ячейки, занятые глазами, — заливка их не трогает */
-const EYE_CELLS: ReadonlySet<number> = (() => {
-  const s = new Set<number>();
-  for (const [r0, c0] of EYE_ANCHORS)
-    for (let r = 0; r < EYE; r++) for (let c = 0; c < EYE; c++) s.add((r0 + r) * GRID + c0 + c);
-  return s;
-})();
 
 /* --------------------------- ID из названия ------------------------------ */
 
@@ -111,78 +97,89 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Центр сетки в координатах индексов ячеек: (col − 4, row − 4) → отклонение от центра */
-const CENTER = (GRID - 1) / 2;
+/* Правила узора — все проверяются до отрисовки:
 
-/** Силуэт заливки: какие ячейки считаются доступными */
-function maskKeeps(mask: MaskKind, col: number, row: number): boolean {
-  const dx = col - CENTER;
-  const dy = row - CENTER;
-  switch (mask) {
-    case "disc":
-      return Math.hypot(dx, dy) <= 3.9;
-    case "ring": {
-      const d = Math.hypot(dx, dy);
-      return d >= 2.3 && d <= 4.8;
+   1. Чернила 10–15 клеток из 25 (40–60%): узор всегда плотный,
+      «цифровой шум» референса, а не бледная решётка и не чёрная дыра.
+   2. Серия одинаковых клеток подряд (по горизонтали и вертикали) <= 3:
+      монолитные полосы сливаются в одно пятно и делают узоры
+      разных меток неразличимыми.
+   3. Поворотная асимметрия: узор не совпадает ни с одним из трёх
+      своих поворотов на 90° — камера всегда определяет ориентацию,
+      а метка не «притворяется» собой же в другом положении. */
+
+const MIN_INK = 10;
+const MAX_INK = 15;
+const MAX_RUN = 3;
+
+type Bits = ReadonlyArray<boolean>;
+
+/** Максимальная длина серии тёмных клеток по строкам и столбцам */
+function maxRunLen(bits: Bits): number {
+  let m = 0;
+  for (let r = 0; r < GRID; r++) {
+    let run = 0;
+    for (let c = 0; c < GRID; c++) {
+      if (bits[r * GRID + c]) {
+        run++;
+        if (run > m) m = run;
+      } else {
+        run = 0;
+      }
     }
-    case "diamond":
-      return Math.abs(dx) + Math.abs(dy) <= 4.9;
-    case "cross":
-      return Math.abs(dx) <= 2.9 || Math.abs(dy) <= 2.9;
-    default:
-      return true; // full — вся свободная область
   }
+  for (let c = 0; c < GRID; c++) {
+    let run = 0;
+    for (let r = 0; r < GRID; r++) {
+      if (bits[r * GRID + c]) {
+        run++;
+        if (run > m) m = run;
+      } else {
+        run = 0;
+      }
+    }
+  }
+  return m;
+}
+
+/** Поворот битовой карты на 90° по часовой, times раз */
+function rotateCW(bits: Bits, times: number): boolean[] {
+  let cur = bits.slice();
+  for (let t = 0; t < times; t++) {
+    const next = new Array<boolean>(GRID * GRID).fill(false);
+    for (let r = 0; r < GRID; r++)
+      for (let c = 0; c < GRID; c++) next[c * GRID + (GRID - 1 - r)] = cur[r * GRID + c];
+    cur = next;
+  }
+  return cur;
+}
+
+/** Узор проходит все правила? */
+function patternValid(bits: Bits): boolean {
+  let ink = 0;
+  for (const b of bits) if (b) ink++;
+  if (ink < MIN_INK || ink > MAX_INK) return false;
+  if (maxRunLen(bits) > MAX_RUN) return false;
+  for (let k = 1; k <= 3; k++) {
+    const rot = rotateCW(bits, k);
+    if (rot.every((v, i) => v === bits[i])) return false;
+  }
+  return true;
 }
 
 /**
- * Режет горизонтальные и вертикальные полосы из 4+ модулей подряд:
- * монолитные пятна сливаются в одно пятно на дальних дистанциях
- * и делают узоры разных меток менее различимыми.
- * Жадный проход: клетка, ставшая 4-й подряд, удаляется, счётчик
- * обнуляется — полосы длиннее 3 гарантированно не выживают.
+ * Страховочный узор — паттерн с самого референса пользователя:
+ * 13 чернил, серии не длиннее 2, поворотно-асимметричен.
+ * Срабатывает, только если 256 случайных попыток не нашли узор
+ * (на практике не случается — правила пропускают ~ половину узоров).
  */
-function antiBlob(cells: Set<number>): void {
-  const killRuns = (index: (k: number) => number, length: number): void => {
-    let run = 0;
-    for (let k = 0; k < length; k++) {
-      if (!cells.has(index(k))) {
-        run = 0;
-        continue;
-      }
-      run++;
-      if (run === 4) {
-        cells.delete(index(k));
-        run = 0;
-      }
-    }
-  };
-  for (let r = 0; r < GRID; r++) killRuns((c) => r * GRID + c, GRID);
-  for (let c = 0; c < GRID; c++) killRuns((r) => r * GRID + c, GRID);
-}
-
-/** Проверяет, что добавление клетки не создаст полосу из 4 подряд */
-function wouldRun(cells: ReadonlySet<number>, i: number): boolean {
-  const r = (i / GRID) | 0;
-  const c = i % GRID;
-  const len = (dr: number, dc: number): number => {
-    let n = 0;
-    let rr = r + dr;
-    let cc = c + dc;
-    while (rr >= 0 && rr < GRID && cc >= 0 && cc < GRID && cells.has(rr * GRID + cc)) {
-      n++;
-      rr += dr;
-      cc += dc;
-    }
-    return n;
-  };
-  // 3 соседа + сама клетка = полоса из 4
-  return len(0, -1) + len(0, 1) >= 3 || len(-1, 0) + len(1, 0) >= 3;
-}
-
-/** Размер модуля в долях клетки: квадраты почти вплотную, круги чуть меньше */
-function moduleScale(style: ModuleStyle): number {
-  return style === "round" ? 0.88 : style === "diamond" ? 0.94 : 0.94;
-}
+const FALLBACK: Bits = [
+  true, false, false, true, true,
+  false, true, true, false, false,
+  true, true, false, true, false,
+  false, false, true, false, true,
+  true, true, false, true, false,
+];
 
 /**
  * Строит узор метки из ID. Одно и то же название — всегда один и тот же узор.
@@ -190,53 +187,23 @@ function moduleScale(style: ModuleStyle): number {
 export function createMarkerDesign(id: string): MarkerDesign | null {
   if (!id) return null;
   const bytes = new TextEncoder().encode(id);
-  const seed = (fnv1a(bytes, 0x811c9dc5) ^ fnv1a(bytes, 0x9dc5811c)) >>> 0;
-  const rnd = mulberry32(seed);
+  const base = (fnv1a(bytes, 0x811c9dc5) ^ fnv1a(bytes, 0x9dc5811c)) >>> 0;
 
-  const STYLES: ModuleStyle[] = ["soft", "round", "sharp", "diamond"];
-  const MASKS: MaskKind[] = ["full", "full", "disc", "ring", "diamond", "cross"]; // full чаще
-  const style = STYLES[(rnd() * STYLES.length) | 0];
-  const mask = MASKS[(rnd() * MASKS.length) | 0];
-  const density = 0.46 + rnd() * 0.14; // 46–60% — сбалансированная плотность узора
-
-  /* Свободные ячейки внутри силуэта */
-  const free: number[] = [];
-  for (let r = 0; r < GRID; r++)
-    for (let c = 0; c < GRID; c++) {
-      const i = r * GRID + c;
-      if (EYE_CELLS.has(i) || !maskKeeps(mask, c, r)) continue;
-      free.push(i);
-    }
-
-  /* Детерминированное перемешивание и отбор под целевую плотность */
-  for (let i = free.length - 1; i > 0; i--) {
-    const j = (rnd() * (i + 1)) | 0;
-    const t = free[i];
-    free[i] = free[j];
-    free[j] = t;
-  }
-  /* Целевое число модулей — от ПОЛНОЙ свободной области сетки:
-     узор остаётся крупным и жирным даже на усечённых силуэтах (ring, disc),
-     но не плотнее 68% маски — зазоры несут различимость узоров */
-  const fullFree = GRID * GRID - EYE_CELLS.size;
-  const lo = Math.min(18, free.length);
-  const hi = Math.max(lo, Math.floor(free.length * 0.68));
-  const target = Math.min(Math.max(Math.round(fullFree * density), lo), hi);
-  const cells = new Set<number>(free.slice(0, target));
-
-  antiBlob(cells);
-
-  /* Страховка «достаточно чернил»: добиваем узор, не создавая полос */
-  for (let i = target; cells.size < lo && i < free.length; i++) {
-    if (!wouldRun(cells, free[i])) cells.add(free[i]);
-  }
-  /* Крайний случай: пул кончился — добиваем без проверки и повторно режем полосы */
-  if (cells.size < lo) {
-    for (let i = target; cells.size < lo && i < free.length; i++) cells.add(free[i]);
-    antiBlob(cells);
+  /* Детерминированный отбор: сиды идут от хеша, пока узор не пройдёт правила */
+  for (let attempt = 0; attempt < 256; attempt++) {
+    const rnd = mulberry32((base + Math.imul(attempt + 1, 0x9e3779b9)) >>> 0);
+    const density = 0.44 + rnd() * 0.14; // 44–58% — плотность узора
+    const bits: boolean[] = [];
+    for (let i = 0; i < GRID * GRID; i++) bits.push(rnd() < density);
+    if (!patternValid(bits)) continue;
+    const cells = new Set<number>();
+    for (let i = 0; i < bits.length; i++) if (bits[i]) cells.add(i);
+    return { grid: GRID, cells };
   }
 
-  return { grid: GRID, style, mask, cells };
+  const cells = new Set<number>();
+  for (let i = 0; i < FALLBACK.length; i++) if (FALLBACK[i]) cells.add(i);
+  return { grid: GRID, cells };
 }
 
 /* ---------- Шрифты: берём реальное семейство из CSS-переменных ---------- */
@@ -273,102 +240,16 @@ function setLetterSpacing(ctx: CanvasRenderingContext2D, px: number): void {
   }
 }
 
-function pathRoundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number
-): void {
-  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
-  ctx.beginPath();
-  if (typeof ctx.roundRect === "function") {
-    ctx.roundRect(x, y, w, h, rr);
-    return;
-  }
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
-}
-
-/** Путь модуля заданной формы, вписанного в квадрат (x, y, size) */
-function modulePath(
-  ctx: CanvasRenderingContext2D,
-  style: ModuleStyle,
-  x: number,
-  y: number,
-  size: number
-): void {
-  if (size <= 0) return;
-  const cx = x + size / 2;
-  const cy = y + size / 2;
-  if (style === "round") {
-    ctx.beginPath();
-    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-    return;
-  }
-  if (style === "diamond") {
-    const r = size / 2;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - r);
-    ctx.lineTo(cx + r, cy);
-    ctx.lineTo(cx, cy + r);
-    ctx.lineTo(cx - r, cy);
-    ctx.closePath();
-    return;
-  }
-  pathRoundRect(ctx, x, y, size, size, style === "soft" ? size * 0.3 : size * 0.08);
-}
-
 /* ------------------------------ Отрисовка -------------------------------- */
 
 /**
- * Якорный «глаз» в квадрате s×s: кольцо + точка, внешняя кромка кольца
- * проходит точно по границе квадрата. Форма повторяет стиль модулей.
- */
-function drawEye(
-  ctx: CanvasRenderingContext2D,
-  style: ModuleStyle,
-  x: number,
-  y: number,
-  s: number
-): void {
-  const c = s / 2;
-  const lw = s / 6; // толщина кольца = 0.5 модуля
-  const dot = (s * 0.92) / 3; // точка чуть меньше модуля
-
-  ctx.strokeStyle = "#000000";
-  ctx.lineWidth = lw;
-  if (style === "round") {
-    ctx.beginPath();
-    ctx.arc(x + c, y + c, c - lw / 2, 0, Math.PI * 2);
-  } else if (style === "diamond") {
-    const r = c - lw / 2;
-    ctx.beginPath();
-    ctx.moveTo(x + c, y + c - r);
-    ctx.lineTo(x + c + r, y + c);
-    ctx.lineTo(x + c, y + c + r);
-    ctx.lineTo(x + c - r, y + c);
-    ctx.closePath();
-  } else {
-    const b = s - lw;
-    pathRoundRect(ctx, x + lw / 2, y + lw / 2, b, b, style === "soft" ? b * 0.26 : b * 0.1);
-  }
-  ctx.stroke();
-
-  ctx.fillStyle = "#000000";
-  modulePath(ctx, style, x + c - dot / 2, y + c - dot / 2, dot);
-  ctx.fill();
-}
-
-/**
- * Рисует карточку метки на canvas: [название] [рамка-трекер + узор + тихая зона].
- * Чистый чёрный на белом, модули почти во всю клетку — максимально крупные
+ * Рисует карточку метки на canvas: [название] [чёрная рамка + отбивка + матрица].
+ * Чистый чёрный на белом, модули прилегают вплотную — максимально крупные
  * фигуры для уверенного визуального различения камерой на расстоянии.
+ *
+ * Все прямоугольники привязаны к общей сетке границ и снапятся к целым
+ * пикселям устройства: соседние тёмные клетки стыкуются ровно, без швов
+ * и зазоров, а рамка остаётся идеально резкой при любом разрешении.
  */
 export function drawMarker(
   canvas: HTMLCanvasElement,
@@ -381,7 +262,7 @@ export function drawMarker(
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  /* Компактная вёрстка: тонкие поля, рамка тоньше — модули крупнее */
+  /* Компактная вёрстка: тонкие поля — метка крупнее */
   const margin = size * 0.025;
   const gap = size * 0.03;
   const nameText = name.trim();
@@ -428,7 +309,7 @@ export function drawMarker(
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(-2, -2, size + 4, height + 4);
 
-  /* --- название над узором --- */
+  /* --- название над меткой --- */
   if (hasName) {
     ctx.fillStyle = "#0a0a0b";
     ctx.font = nameFont(nameSize);
@@ -439,40 +320,47 @@ export function drawMarker(
     setLetterSpacing(ctx, 0);
   }
 
-  /* --- блок узора с рамкой-трекером --- */
+  /* --- метка: чёрная рамка → белая отбивка → матрица узора --- */
   const mx = margin;
   const my = margin + nameH + gap;
-  const n = design.grid;
-  const frameT = markerSide * 0.026;
-  const inner = markerSide - 2 * frameT;
-  const cell = inner / (n + 2 * QUIET);
-  const ox = mx + frameT + QUIET * cell;
-  const oy = my + frameT + QUIET * cell;
+  const m = markerSide / SIDE_MODULES; // размер модуля
 
-  const outerR = markerSide * 0.04;
+  /* Снап к целым пикселям устройства — резкие края без сглаживания */
+  const snap = (v: number): number => Math.round(v * dpr) / dpr;
+
+  /* Сплошная чёрная рамка: углы строго прямые */
+  const bx0 = snap(mx);
+  const by0 = snap(my);
+  const bx1 = snap(mx + markerSide);
+  const by1 = snap(my + markerSide);
   ctx.fillStyle = "#000000";
-  pathRoundRect(ctx, mx, my, markerSide, markerSide, outerR);
-  ctx.fill();
+  ctx.fillRect(bx0, by0, bx1 - bx0, by1 - by0);
+
+  /* Белая внутренность от ВНУТРЕННЕГО края рамки:
+     отбивка и поле матрицы — белые, тёмными будут только клетки узора */
+  const wx0 = snap(mx + BORDER * m);
+  const wy0 = snap(my + BORDER * m);
+  const wx1 = snap(mx + markerSide - BORDER * m);
+  const wy1 = snap(my + markerSide - BORDER * m);
   ctx.fillStyle = "#ffffff";
-  pathRoundRect(ctx, mx + frameT, my + frameT, inner, inner, Math.max(outerR - frameT * 0.4, 0));
-  ctx.fill();
+  ctx.fillRect(wx0, wy0, wx1 - wx0, wy1 - wy0);
 
-  /* --- модули заливки: крупные фигуры, детерминированный порядок --- */
-  const { style, cells } = design;
-  const msize = cell * moduleScale(style);
-  const inset = (cell - msize) / 2;
+  /* Границы клеток — общие для соседей: стык без шва и без нахлёста.
+     Начало матрицы: рамка 1.4 + отбивка 1 = 2.4 модуля от края метки */
+  const n = design.grid;
+  const gx0 = snap(mx + (BORDER + QUIET) * m);
+  const gy0 = snap(my + (BORDER + QUIET) * m);
+  const X: number[] = [];
+  const Y: number[] = [];
+  for (let c = 0; c <= n; c++) X.push(snap(gx0 + c * m));
+  for (let r = 0; r <= n; r++) Y.push(snap(gy0 + r * m));
+
+  /* Тёмные клетки матрицы — модули вплотную, как битмап референса */
   ctx.fillStyle = "#000000";
-  for (const i of cells) {
+  for (const i of design.cells) {
     const r = (i / n) | 0;
     const c = i % n;
-    modulePath(ctx, style, ox + c * cell + inset, oy + r * cell + inset, msize);
-    ctx.fill();
-  }
-
-  /* --- три якорных «глаза» по углам --- */
-  const eyeS = EYE * cell;
-  for (const [r0, c0] of EYE_ANCHORS) {
-    drawEye(ctx, style, ox + c0 * cell, oy + r0 * cell, eyeS);
+    ctx.fillRect(X[c], Y[r], X[c + 1] - X[c], Y[r + 1] - Y[r]);
   }
 }
 

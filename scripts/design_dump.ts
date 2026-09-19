@@ -1,9 +1,16 @@
 /** Дамп дизайна меток в ASCII — проверка движка без браузера.
  *  Запуск: bun scripts/design_dump.ts "Имя 1" "Имя 2" ... */
-import { deriveId, createMarkerDesign } from "../src/lib/marker";
+import { deriveId, createMarkerDesign, GRID } from "../src/lib/marker";
 
 const names = process.argv.slice(2);
 if (names.length === 0) names.push("Камри", "Молния", "Такси 1", "Красная спортивная", "A");
+
+const rotCW = (bits: boolean[]): boolean[] => {
+  const next = new Array<boolean>(GRID * GRID).fill(false);
+  for (let r = 0; r < GRID; r++)
+    for (let c = 0; c < GRID; c++) next[c * GRID + (GRID - 1 - r)] = bits[r * GRID + c];
+  return next;
+};
 
 for (const n of names) {
   const id = deriveId(n);
@@ -13,32 +20,36 @@ for (const n of names) {
     continue;
   }
   const g = d.grid;
+  const bits = new Array<boolean>(g * g).fill(false);
+  for (const i of d.cells) bits[i] = true;
   const art: string[][] = Array.from({ length: g }, () => Array<string>(g).fill("."));
-  for (const i of d.cells) {
-    const r = (i / g) | 0;
-    const c = i % g;
-    art[r][c] = "#";
-  }
-  const eyes: Array<[number, number]> = [
-    [0, 0],
-    [0, g - 3],
-    [g - 3, 0],
-  ];
-  for (const [r0, c0] of eyes)
-    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) art[r0 + r][c0 + c] = "O";
+  for (let i = 0; i < bits.length; i++) if (bits[i]) art[(i / g) | 0][i % g] = "#";
 
-  // плотность и метрики
+  // метрики: серии и поворотная асимметрия
   let runs = 0;
   for (let r = 0; r < g; r++) {
     let run = 0;
     for (let c = 0; c <= g; c++) {
-      if (c < g && art[r][c] === "#") run++;
+      if (c < g && bits[r * g + c]) run++;
       else {
         if (run >= 4) runs++;
         run = 0;
       }
     }
   }
-  console.log(`\n=== ${n} — id=${id} style=${d.style} mask=${d.mask} ink=${d.cells.size}/${g * g - 27} полос4+=${runs} ===`);
-  console.log(art.map((row) => row.join("")).join("\n"));
+  let asym = true;
+  let cur = bits.slice();
+  for (let k = 1; k <= 3; k++) {
+    cur = rotCW(cur);
+    if (cur.every((v, i) => v === bits[i])) asym = false;
+  }
+  console.log(
+    `\n=== ${n} — id=${id} ink=${d.cells.size}/${g * g} полос4+=${runs} асимметрия=${asym ? "да" : "НЕТ"} ===`
+  );
+  // рамка + отбивка вокруг матрицы, как на реальной метке
+  const pad = "  ";
+  const bar = "  " + "##".repeat(g + 4);
+  console.log(pad + bar);
+  for (const row of art) console.log(pad + "##" + "  " + row.map((v) => (v === "#" ? "##" : "  ")).join("") + "  ##");
+  console.log(pad + bar);
 }

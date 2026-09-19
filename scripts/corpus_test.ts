@@ -1,6 +1,6 @@
-/** Итерация 2: корпусный тест движка произвольных меток.
+/** Итерация 5: корпусный тест движка меток «ArUco-bold» (матрица 5×5).
  *  Запуск: bun scripts/corpus_test.ts */
-import { createMarkerDesign, deriveId } from "../src/lib/marker";
+import { createMarkerDesign, deriveId, GRID } from "../src/lib/marker";
 
 const NAMES = [
   "Камри", "Молния", "Такси 1", "Такси 2", "Красная спортивная", "Синий седан",
@@ -21,14 +21,10 @@ const ok = (msg: string, extra = ""): void => console.log(`OK   ${msg} ${extra}`
 interface Row {
   name: string;
   id: string;
-  style: string;
-  mask: string;
-  cells: number[];
+  bits: boolean[]; // 25 клеток
 }
 
 const rows: Row[] = [];
-const styleCount = new Map<string, number>();
-const maskCount = new Map<string, number>();
 
 for (const name of NAMES) {
   const id = deriveId(name);
@@ -41,9 +37,15 @@ for (const name of NAMES) {
     fail(`пустой дизайн: ${name}`);
     continue;
   }
-  rows.push({ name, id, style: d.style, mask: d.mask, cells: [...d.cells].sort((a, b) => a - b) });
-  styleCount.set(d.style, (styleCount.get(d.style) ?? 0) + 1);
-  maskCount.set(d.mask, (maskCount.get(d.mask) ?? 0) + 1);
+  if (d.grid !== GRID) {
+    fail(`сетка != 5: ${name}`);
+  }
+  const bits = new Array<boolean>(GRID * GRID).fill(false);
+  for (const i of d.cells) {
+    if (i < 0 || i >= GRID * GRID) fail(`индекс клетки вне сетки: ${name} (${i})`);
+    else bits[i] = true;
+  }
+  rows.push({ name, id, bits });
 }
 
 ok(`дизайны построены: ${rows.length}/${NAMES.length}`);
@@ -52,13 +54,7 @@ ok(`дизайны построены: ${rows.length}/${NAMES.length}`);
 let det = 0;
 for (const r of rows.slice(0, 12)) {
   const d2 = createMarkerDesign(r.id);
-  if (
-    !d2 ||
-    d2.style !== r.style ||
-    d2.mask !== r.mask ||
-    d2.cells.size !== r.cells.length ||
-    [...d2.cells].sort((a, b) => a - b).join() !== r.cells.join()
-  ) {
+  if (!d2 || d2.cells.size !== r.bits.filter(Boolean).length || [...d2.cells].sort((a, b) => a - b).join() !== r.bits.map((b, i) => (b ? i : -1)).filter((i) => i >= 0).sort((a, b) => a - b).join()) {
     fail(`недетерминизм: ${r.name}`);
     det++;
   }
@@ -71,50 +67,69 @@ const idB = deriveId("молния");
 const idC = deriveId("  Молния  ");
 if (idA === idB && idB === idC) ok("регистр/пробелы не меняют ID", `(${idA})`);
 else fail(`регистр/пробелы меняют ID: ${idA} / ${idB} / ${idC}`);
-if (createMarkerDesign(idA && idB && idC ? idC : "")?.cells.size === createMarkerDesign(idA)?.cells.size)
-  ok("узор «Молния»/«молния» идентичен");
+const samePattern =
+  [...(createMarkerDesign(idC)?.cells ?? [])].sort((a, b) => a - b).join() ===
+  [...(createMarkerDesign(idA)?.cells ?? [])].sort((a, b) => a - b).join();
+if (samePattern) ok("узор «Молния»/«молния» идентичен");
+else fail("узор меняется от регистра");
 
-/* 3. Уникальность ID по корпусу */
+/* 3. Уникальность ID и узоров по корпусу */
 const ids = new Set(rows.map((r) => r.id));
 if (ids.size === rows.length) ok(`ID уникальны: ${ids.size}/${rows.length}`);
 else fail(`коллизии ID: ${rows.length - ids.size}`);
+const patterns = new Set(rows.map((r) => r.bits.map((b) => (b ? "1" : "0")).join("")));
+if (patterns.size === rows.length) ok(`узоры уникальны: ${patterns.size}/${rows.length}`);
+else fail(`коллизии узоров: ${rows.length - patterns.size}`);
 
-/* 4. Плотность чернил: 18..36 модулей */
-const inks = rows.map((r) => r.cells.length);
+/* 4. Плотность чернил: 10–15 клеток из 25 (40–60%) */
+const inks = rows.map((r) => r.bits.filter(Boolean).length);
 const minInk = Math.min(...inks);
 const maxInk = Math.max(...inks);
 const avgInk = inks.reduce((a, b) => a + b, 0) / inks.length;
-if (minInk >= 18 && maxInk <= 36) ok("плотность чернил 18-36", `(мин ${minInk}, сред ${avgInk.toFixed(1)}, макс ${maxInk})`);
+if (minInk >= 10 && maxInk <= 15) ok("плотность чернил 10–15 из 25", `(мин ${minInk}, сред ${avgInk.toFixed(1)}, макс ${maxInk})`);
 else fail(`плотность вне диапазона: мин ${minInk}, макс ${maxInk}`);
 
-/* 5. Анти-блоб: полос 4+ по строкам и столбцам нет */
-const EYE = new Set<number>();
-for (const [r0, c0] of [
-  [0, 0],
-  [0, 6],
-  [6, 0],
-] as const)
-  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) EYE.add((r0 + r) * 9 + c0 + c);
-let blobViolations = 0;
+/* 5. Полосы: серий одинаковых клеток 4+ по строкам и столбцам нет */
+let runViolations = 0;
 for (const r of rows) {
-  const on = new Set(r.cells);
+  const on = r.bits;
   const scan = (idx: (k: number) => number): void => {
     let run = 0;
-    for (let k = 0; k <= 9; k++) {
-      if (k < 9 && on.has(idx(k))) run++;
+    for (let k = 0; k <= GRID; k++) {
+      if (k < GRID && on[idx(k)]) run++;
       else {
-        if (run >= 4) blobViolations++;
+        if (run >= 4) runViolations++;
         run = 0;
       }
     }
   };
-  for (let row = 0; row < 9; row++) scan((c) => row * 9 + c);
-  for (let col = 0; col < 9; col++) scan(row => row * 9 + col);
+  for (let row = 0; row < GRID; row++) scan((c) => row * GRID + c);
+  for (let col = 0; col < GRID; col++) scan((row) => row * GRID + col);
 }
-if (blobViolations === 0) ok("анти-блоб: полос 4+ нет во всём корпусе");
-else fail(`анти-блоб нарушен: ${blobViolations} полос`);
+if (runViolations === 0) ok("полос 4+ нет во всём корпусе");
+else fail(`полосы нарушены: ${runViolations} шт.`);
 
-/* 6. Попарная различимость: симметричная разность множеств клеток */
+/* 6. Поворотная асимметрия: узор не совпадает со своими поворотами */
+let rotViolations = 0;
+for (const r of rows) {
+  const rotCW = (bits: boolean[]): boolean[] => {
+    const next = new Array<boolean>(GRID * GRID).fill(false);
+    for (let rr = 0; rr < GRID; rr++)
+      for (let cc = 0; cc < GRID; cc++) next[cc * GRID + (GRID - 1 - rr)] = bits[rr * GRID + cc];
+    return next;
+  };
+  let cur = r.bits.slice();
+  for (let k = 1; k <= 3; k++) {
+    cur = rotCW(cur);
+    if (cur.every((v, i) => v === r.bits[i])) {
+      rotViolations++;
+      fail(`узор симметричен при повороте ${k * 90}°: ${r.name}`);
+    }
+  }
+}
+if (rotViolations === 0) ok("поворотная асимметрия: все 40 узоров");
+
+/* 7. Попарная различимость (расстояние Хэмминга по 25 клеткам) */
 let minDiff = Infinity;
 let worstPair = "";
 let total = 0;
@@ -122,10 +137,8 @@ let pairs = 0;
 for (let i = 0; i < rows.length; i++) {
   for (let j = i + 1; j < rows.length; j++) {
     if (rows[i].id === rows[j].id) continue;
-    const a = new Set(rows[i].cells);
     let diff = 0;
-    for (const c of rows[j].cells) if (!a.has(c)) diff++;
-    diff += rows[i].cells.length - rows[j].cells.filter((c) => a.has(c)).length;
+    for (let k = 0; k < GRID * GRID; k++) if (rows[i].bits[k] !== rows[j].bits[k]) diff++;
     total += diff;
     pairs++;
     if (diff < minDiff) {
@@ -135,18 +148,8 @@ for (let i = 0; i < rows.length; i++) {
   }
 }
 const avgDiff = total / Math.max(pairs, 1);
-if (minDiff >= 8) ok("попарная различимость клеток >= 8", `(мин ${minDiff} [${worstPair}], сред ${avgDiff.toFixed(1)})`);
+if (minDiff >= 4) ok("попарная различимость >= 4 клеток", `(мин ${minDiff} [${worstPair}], сред ${avgDiff.toFixed(1)})`);
 else fail(`слабая различимость: ${minDiff} клеток [${worstPair}]`);
-
-/* 7. Разнообразие: все стили и все маски встречаются */
-const styles = ["soft", "round", "sharp", "diamond"];
-const masks = ["full", "disc", "ring", "diamond", "cross"];
-for (const s of styles)
-  if ((styleCount.get(s) ?? 0) > 0) ok(`стиль ${s}: ${styleCount.get(s)}`);
-  else fail(`стиль ${s} не встречается`);
-for (const m of masks)
-  if ((maskCount.get(m) ?? 0) > 0) ok(`маска ${m}: ${maskCount.get(m)}`);
-  else fail(`маска ${m} не встречается`);
 
 /* 8. Граничные имена */
 if (deriveId("   ") === "") ok("имя из пробелов -> пустой ID");
@@ -156,7 +159,7 @@ else fail("пустой ID даёт дизайн");
 
 console.log();
 if (failures) {
-  console.log(`ИТЕРАЦИЯ 2 (корпус): ПРОВАЛЕНО ${failures}`);
+  console.log(`ИТЕРАЦИЯ 5 (корпус): ПРОВАЛЕНО ${failures}`);
   process.exit(1);
 }
-console.log(`ИТЕРАЦИЯ 2 (корпус): ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ (${pairs} пар, средняя различимость ${avgDiff.toFixed(1)} клеток)`);
+console.log(`ИТЕРАЦИЯ 5 (корпус): ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ (${pairs} пар, средняя различимость ${avgDiff.toFixed(1)} клеток, чернила ${minInk}–${maxInk})`);
