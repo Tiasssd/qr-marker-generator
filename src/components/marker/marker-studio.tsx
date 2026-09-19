@@ -52,7 +52,7 @@ import {
   type MarkerConfig,
   type MarkerDesign,
 } from "@/lib/marker";
-import { Copy, Download, History, Maximize2, Printer, ScanLine, Shapes, Trash2, X } from "lucide-react";
+import { Copy, Download, History, Maximize2, Printer, ScanLine, Shapes, Trash2, Type, X } from "lucide-react";
 
 const HISTORY_KEY = "ar-marker-studio:history:v2";
 const EXPORT_SIZE = 2048;
@@ -392,9 +392,9 @@ export function MarkerStudio() {
     <>
       {printSheet}
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(320px,400px)_1fr]">
-        {/* Панель метки */}
-        <Card className="anim-rise rounded-[28px] border-stone-200/80 bg-white shadow-soft">
+      <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(340px,420px)_1fr] lg:items-start">
+        {/* Панель метки (тянется на высоту своей строки — без щелей под карточкой) */}
+        <Card className="anim-rise rounded-[28px] border-stone-200/80 bg-white shadow-soft lg:col-start-1 lg:row-start-1 lg:h-full">
           <CardContent className="space-y-6">
             {/* Название — единственный ввод: задаёт и подпись, и уникальный узор */}
             <div className="space-y-2">
@@ -499,9 +499,18 @@ export function MarkerStudio() {
           </CardContent>
         </Card>
 
-        {/* Предпросмотр */}
-        <div className="anim-rise anim-rise-delay-1 lg:sticky lg:top-24">
-          <Card className="rounded-[28px] border-stone-200/80 bg-white shadow-soft">
+        {/* Предпросмотр: правая колонка на обе строки; при готовой метке
+            прилипает при прокрутке истории, в пустом — тянется и центрирует онбординг */}
+        <div
+          className={`anim-rise anim-rise-delay-1 lg:col-start-2 lg:row-span-2 lg:row-start-1 ${
+            design ? "lg:sticky lg:top-24" : "lg:self-stretch"
+          }`}
+        >
+          <Card
+            className={`rounded-[28px] border-stone-200/80 bg-white shadow-soft${
+              design ? "" : " lg:h-full"
+            }`}
+          >
             <CardHeader>
               <CardTitle className="text-[17px] font-semibold tracking-tight text-stone-900">Предпросмотр</CardTitle>
               <CardAction>
@@ -521,7 +530,7 @@ export function MarkerStudio() {
                 )}
               </CardAction>
             </CardHeader>
-            <CardContent>
+            <CardContent className={design ? "" : "flex flex-1 flex-col"}>
               {design ? (
                 <div className="mx-auto max-w-[480px] rounded-[24px] bg-stone-100/80 p-5">
                   <button
@@ -543,105 +552,146 @@ export function MarkerStudio() {
                   </button>
                 </div>
               ) : (
-                /* Пустое состояние: рамка-заготовка вместо пустой белой бумаги */
-                <div className="mx-auto grid aspect-square max-w-[480px] place-items-center rounded-[24px] border-2 border-dashed border-stone-300/80 bg-stone-100/60 px-6 text-center">
-                  <div>
-                    <ScanLine className="mx-auto size-10 text-stone-400" aria-hidden="true" />
-                    <p className="mt-3 text-sm text-stone-500">
-                      Введите название — здесь появится метка
-                    </p>
-                  </div>
+                /* Пустое состояние: компактный онбординг из трёх шагов —
+                   вместо высокой пустой заглушки */
+                <div className="mx-auto flex w-full max-w-[480px] flex-1 flex-col justify-center gap-4 rounded-[24px] border-2 border-dashed border-stone-300/80 bg-stone-100/60 p-5 sm:p-6">
+                  <p className="text-center text-xs font-medium text-stone-500">
+                    Как это работает
+                  </p>
+                  <ol className="grid list-none gap-2.5 sm:grid-cols-3">
+                    {[
+                      {
+                        icon: Type,
+                        title: "Введите название",
+                        text: "Узор метки уникален для каждого названия",
+                      },
+                      {
+                        icon: Download,
+                        title: "Скачайте и распечатайте",
+                        text: "PNG или печать на белой бумаге",
+                      },
+                      {
+                        icon: ScanLine,
+                        title: "Наведите камеру",
+                        text: "На метке появится 3D-машина",
+                      },
+                    ].map((step) => (
+                      <li
+                        key={step.title}
+                        className="flex items-start gap-3 rounded-2xl bg-white/80 px-4 py-4"
+                      >
+                        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-stone-100 text-stone-700">
+                          <step.icon className="size-4" aria-hidden="true" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-[13px] font-medium leading-snug text-stone-800">
+                            {step.title}
+                          </span>
+                          <span className="mt-1 block text-xs leading-snug text-stone-500">
+                            {step.text}
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
-      </div>
 
-      {/* История */}
-      <section className="anim-rise anim-rise-delay-2 mt-12 lg:mt-14" aria-labelledby="history-heading">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-3">
-          <div className="flex items-center gap-2.5">
-            <History className="size-4 text-stone-400" aria-hidden="true" />
-            <h2 id="history-heading" className="text-xl font-semibold tracking-tight text-stone-900">
+        {/* История — третья ячейка грида: левая колонка под панелью.
+            Страница собрана без пустот: карточка заполняет строку целиком,
+            длинный список прокручивается внутри */}
+        <Card className="anim-rise anim-rise-delay-2 flex flex-col gap-0 rounded-[28px] border-stone-200/80 bg-white py-0 shadow-soft lg:col-start-1 lg:row-start-2 lg:h-full">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-stone-100 px-5 py-4">
+            <h2
+              id="history-heading"
+              className="flex min-w-0 items-center gap-2 text-[15px] font-semibold tracking-tight text-stone-900"
+            >
+              <History className="size-4 shrink-0 text-stone-400" aria-hidden="true" />
               История меток
+              <Badge variant="secondary" className="bg-stone-100 text-stone-600 tabular-nums">
+                {history.length}
+              </Badge>
             </h2>
-            <Badge variant="secondary" className="bg-stone-100 text-stone-600 tabular-nums">
-              {history.length}
-            </Badge>
-          </div>
-          {history.length > 0 && (
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handlePrintAll}
-                title="Распечатать лист со всеми метками"
-                className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700"
-              >
-                <Printer className="size-4" aria-hidden="true" />
-                Печать всех
-              </Button>
-              <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="rounded-full text-stone-500 hover:bg-red-50 hover:text-red-600"
-                  >
-                    <Trash2 className="size-4" aria-hidden="true" />
-                    Очистить
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent className="rounded-[24px] border-stone-200/80 bg-white text-stone-900 shadow-soft">
-                  <AlertDialogHeader>
-                    <AlertDialogTitle className="text-stone-900">
-                      Очистить историю?
-                    </AlertDialogTitle>
-                    <AlertDialogDescription className="text-stone-500">
-                      Все сохранённые метки ({history.length}) пропадут из списка.
-                      Скачанные PNG-файлы это не затронет.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel className="rounded-full border-transparent bg-stone-100 text-stone-700 hover:bg-stone-200 hover:text-stone-900">
-                      Отмена
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={clearHistory}
-                      className="rounded-full bg-red-600 text-white hover:bg-red-500"
+            {history.length > 0 && (
+              <div className="ml-auto flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handlePrintAll}
+                  title="Распечатать лист со всеми метками"
+                  className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+                >
+                  <Printer className="size-4" aria-hidden="true" />
+                  Печать всех
+                </Button>
+                <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="rounded-full text-stone-500 hover:bg-red-50 hover:text-red-600"
                     >
+                      <Trash2 className="size-4" aria-hidden="true" />
                       Очистить
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          )}
-        </div>
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent className="rounded-[24px] border-stone-200/80 bg-white text-stone-900 shadow-soft">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="text-stone-900">
+                        Очистить историю?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription className="text-stone-500">
+                        Все сохранённые метки ({history.length}) пропадут из списка.
+                        Скачанные PNG-файлы это не затронет.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="rounded-full border-transparent bg-stone-100 text-stone-700 hover:bg-stone-200 hover:text-stone-900">
+                        Отмена
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={clearHistory}
+                        className="rounded-full bg-red-600 text-white hover:bg-red-500"
+                      >
+                        Очистить
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            )}
+          </div>
 
-        {history.length === 0 ? (
-          <div className="rounded-[24px] border border-dashed border-stone-300/80 bg-white/60 px-6 py-8 text-center">
-            <Shapes className="mx-auto size-8 text-stone-300" aria-hidden="true" />
-            <p className="mt-3 text-sm text-stone-500">
-              Скачайте первую метку — она появится здесь.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {history.map((item, i) => (
-              <HistoryCard
-                key={item.ts}
-                item={item}
-                index={i}
-                onDownload={downloadItem}
-                onLoad={loadItem}
-                onDelete={deleteItem}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+          <CardContent className="flex min-h-0 flex-1 flex-col px-5 py-4">
+            {history.length === 0 ? (
+              /* Тихая центрированная подсказка вместо большой пустой коробки */
+              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center">
+                <Shapes className="size-6 text-stone-300" aria-hidden="true" />
+                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500">
+                  Скачайте первую метку — она появится здесь
+                </p>
+              </div>
+            ) : (
+              <ul className="flex list-none flex-col gap-3 lg:max-h-[65vh] lg:overflow-y-auto lg:overscroll-contain lg:pr-1.5">
+                {history.map((item, i) => (
+                  <li key={item.ts}>
+                    <HistoryCard
+                      item={item}
+                      index={i}
+                      onDownload={downloadItem}
+                      onLoad={loadItem}
+                      onDelete={deleteItem}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Мобильная липкая панель: скачать, не прокручивая наверх */}
       {design && (

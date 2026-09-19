@@ -1,0 +1,706 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import {
+     4→     4→  useCallback,
+     5→     5→  useEffect,
+     6→     6→  useMemo,
+     7→     7→  useRef,
+     8→     8→  useState,
+     9→     9→} from "react";
+    10→    10→import { createPortal } from "react-dom";
+    11→    11→import {
+    12→    12→  Dialog,
+    13→    13→  DialogContent,
+    14→    14→  DialogDescription,
+    15→    15→  DialogFooter,
+    16→    16→  DialogHeader,
+    17→    17→  DialogTitle,
+    18→    18→} from "@/components/ui/dialog";
+    19→    19→import {
+    20→    20→  AlertDialog,
+    21→    21→  AlertDialogAction,
+    22→    22→  AlertDialogCancel,
+    23→    23→  AlertDialogContent,
+    24→    24→  AlertDialogDescription,
+    25→    25→  AlertDialogFooter,
+    26→    26→  AlertDialogHeader,
+    27→    27→  AlertDialogTitle,
+    28→    28→  AlertDialogTrigger,
+    29→    29→} from "@/components/ui/alert-dialog";
+    30→    30→import { Badge } from "@/components/ui/badge";
+    31→    31→import { Button } from "@/components/ui/button";
+    32→    32→import {
+    33→    33→  Card,
+    34→    34→  CardAction,
+    35→    35→  CardContent,
+    36→    36→  CardHeader,
+    37→    37→  CardTitle,
+    38→    38→} from "@/components/ui/card";
+    39→    39→import { Input } from "@/components/ui/input";
+    40→    40→import { Label } from "@/components/ui/label";
+    41→    41→import { ToastAction } from "@/components/ui/toast";
+    42→    42→import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+    43→    43→import { useToast } from "@/hooks/use-toast";
+    44→    44→import { HistoryCard, type HistoryItem } from "@/components/marker/history-card";
+    45→    45→import {
+    46→    46→  createMarkerDesign,
+    47→    47→  deriveId,
+    48→    48→  drawMarker,
+    49→    49→  exportMarkerPng,
+    50→    50→  markerFileName,
+    51→    51→  renderMarkerDataUrl,
+    52→    52→  type MarkerConfig,
+    53→    53→  type MarkerDesign,
+    54→    54→} from "@/lib/marker";
+    55→    55→import { Copy, Download, History, Maximize2, Printer, ScanLine, Shapes, Trash2, X } from "lucide-react";
+    56→    56→
+    57→    57→const HISTORY_KEY = "ar-marker-studio:history:v2";
+    58→    58→const EXPORT_SIZE = 2048;
+    59→    59→
+    60→    60→/** Задание на печать: одна метка или лист со всеми метками из истории */
+    61→    61→interface PrintJob {
+    62→    62→  /** data-URL картинок меток */
+    63→    63→  images: string[];
+    64→    64→  /** Понятные подписи (названия) — для alt */
+    65→    65→  labels: string[];
+    66→    66→  /** Физическая ширина одной метки на бумаге, см */
+    67→    67→  sizeCm: number;
+    68→    68→  /** true — лист A4 со всеми метками сеткой 2 колонки */
+    69→    69→  batch: boolean;
+    70→    70→}
+    71→    71→
+    72→    72→function signature(it: MarkerConfig): string {
+    73→    73→  // ID и есть идентичность метки: «Молния» и «молния» — один и тот же узор
+    74→    74→  return it.id;
+    75→    75→}
+    76→    76→
+    77→    77→/* История: v2 (ID выводится из названия) с миграцией из v1 */
+    78→    78→function loadHistory(): HistoryItem[] {
+    79→    79→  try {
+    80→    80→    const raw =
+    81→    81→      window.localStorage.getItem(HISTORY_KEY) ??
+    82→    82→      window.localStorage.getItem("ar-marker-studio:history:v1");
+    83→    83→    if (!raw) return [];
+    84→    84→    const parsed: unknown = JSON.parse(raw);
+    85→    85→    if (!Array.isArray(parsed)) return [];
+    86→    86→    const items = parsed
+    87→    87→      .filter(
+    88→    88→        (it): it is HistoryItem =>
+    89→    89→          Boolean(it) &&
+    90→    90→          typeof it === "object" &&
+    91→    91→          typeof (it as HistoryItem).name === "string"
+    92→    92→      )
+    93→    93→      // Название — теперь идентичность метки: ID пересчитываем из него
+    94→    94→      .map((it) => {
+    95→    95→        const name = it.name.trim().replace(/\s+/g, " ");
+    96→    96→        return { name, id: deriveId(name), ts: typeof it.ts === "number" ? it.ts : Date.now() };
+    97→    97→      })
+    98→    98→      .filter((it) => it.name.length > 0);
+    99→    99→    return items.slice(0, 40);
+   100→   100→  } catch {
+   101→   101→    return [];
+   102→   102→  }
+   103→   103→}
+   104→   104→
+   105→   105→export function MarkerStudio() {
+   106→   106→  const { toast } = useToast();
+   107→   107→  const [name, setName] = useState("");
+   108→   108→  const [printSizeCm, setPrintSizeCm] = useState(16);
+   109→   109→  const [history, setHistory] = useState<HistoryItem[]>(() => loadHistory());
+   110→   110→  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
+   111→   111→  const [printLoaded, setPrintLoaded] = useState(0);
+   112→   112→  const [confirmClear, setConfirmClear] = useState(false);
+   113→   113→  const [fontsReady, setFontsReady] = useState(false);
+   114→   114→
+   115→   115→  const previewRef = useRef<HTMLCanvasElement>(null);
+   116→   116→  const nameInputRef = useRef<HTMLInputElement>(null);
+   117→   117→  const zoomRef = useRef<HTMLCanvasElement>(null);
+   118→   118→  const [zoomOpen, setZoomOpen] = useState(false);
+   119→   119→
+   120→   120→  /* ID выводится из названия: разное название — другой узор,
+   121→   121→     то же название — та же метка (перепечатка не ломает привязку) */
+   122→   122→  const id = useMemo(() => deriveId(name), [name]);
+   123→   123→  const design = useMemo(() => (id ? createMarkerDesign(id) : null), [id]);
+   124→   124→
+   125→   125→  /* Перерисовка предпросмотра после загрузки шрифтов */
+   126→   126→  useEffect(() => {
+   127→   127→    const fonts = document.fonts;
+   128→   128→    if (!fonts) return;
+   129→   129→    fonts.ready
+   130→   130→      .then(() => setFontsReady(true))
+   131→   131→      .catch(() => undefined);
+   132→   132→  }, []);
+   133→   133→
+   134→   134→  /* Печать стартует, только когда все картинки задания декодированы */
+   135→   135→  useEffect(() => {
+   136→   136→    if (!printJob || printLoaded < printJob.images.length) return;
+   137→   137→    const t = window.setTimeout(() => window.print(), 150);
+   138→   138→    return () => window.clearTimeout(t);
+   139→   139→  }, [printJob, printLoaded]);
+   140→   140→
+   141→   141→  /* Страховка: если картинка не декодируется — печатаем через 2.5 с что есть */
+   142→   142→  useEffect(() => {
+   143→   143→    if (!printJob || printLoaded >= printJob.images.length) return;
+   144→   144→    const total = printJob.images.length;
+   145→   145→    const t = window.setTimeout(() => setPrintLoaded(total), 2500);
+   146→   146→    return () => window.clearTimeout(t);
+   147→   147→  }, [printJob, printLoaded]);
+   148→   148→
+   149→   149→  /* После закрытия диалога печати освобождаем память (data-URL) */
+   150→   150→  useEffect(() => {
+   151→   151→    if (!printJob) return;
+   152→   152→    const cleanup = (): void => {
+   153→   153→      setPrintJob(null);
+   154→   154→      setPrintLoaded(0);
+   155→   155→    };
+   156→   156→    window.addEventListener("afterprint", cleanup);
+   157→   157→    return () => window.removeEventListener("afterprint", cleanup);
+   158→   158→  }, [printJob]);
+   159→   159→
+   160→   160→  /* Сохранение истории между сессиями */
+   161→   161→  useEffect(() => {
+   162→   162→    try {
+   163→   163→      window.localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+   164→   164→    } catch {
+   165→   165→      // Хранилище недоступно — история живёт только в памяти сессии
+   166→   166→    }
+   167→   167→  }, [history]);
+   168→   168→
+   169→   169→  /* Живой предпросмотр метки */
+   170→   170→  useEffect(() => {
+   171→   171→    if (!design || !previewRef.current) return;
+   172→   172→    drawMarker(previewRef.current, design, {
+   173→   173→      name,
+   174→   174→      id,
+   175→   175→      size: 660,
+   176→   176→      dpr: Math.min(window.devicePixelRatio || 1, 2),
+   177→   177→    });
+   178→   178→  }, [design, name, id, fontsReady]);
+   179→   179→
+   180→   180→  /* Заголовок вкладки отражает текущую метку */
+   181→   181→  useEffect(() => {
+   182→   182→    const trimmed = name.trim();
+   183→   183→    document.title = trimmed
+   184→   184→      ? `Метка «${trimmed}» — Генератор AR-меток`
+   185→   185→      : "Генератор AR-меток — трекер-метки для 3D-машинок";
+   186→   186→  }, [name]);
+   187→   187→
+   188→   188→  /* Липкая мобильная панель резервирует место внизу страницы (body padding),
+   189→   189→     чтобы подвал не оказывался под ней; на десктопе и печати — без резерва */
+   190→   190→  useEffect(() => {
+   191→   191→    if (!design) return;
+   192→   192→    const mq = window.matchMedia("(max-width: 1023px)");
+   193→   193→    const apply = (): void => {
+   194→   194→      const bar = document.querySelector<HTMLElement>(".marker-sticky-bar");
+   195→   195→      /* плавающая капсула с отступом снизу — берём высоту + зазор */
+   196→   196→      document.body.style.paddingBottom =
+   197→   197→        mq.matches && bar ? `${bar.offsetHeight + 20}px` : "";
+   198→   198→    };
+   199→   199→    apply();
+   200→   200→    mq.addEventListener("change", apply);
+   201→   201→    return () => {
+   202→   202→      mq.removeEventListener("change", apply);
+   203→   203→      document.body.style.paddingBottom = "";
+   204→   204→    };
+   205→   205→  }, [design]);
+   206→   206→
+   207→   207→  /* Крупный вид в модалке. Портал диалога монтируется ПОЗЖЕ срабатывания
+   208→   208→     эффекта с zoomOpen, поэтому рисуем прямо в ref-callback: он вызывается
+   209→   209→     в момент реального появления канваса в DOM (и при смене названия) */
+   210→   210→  const drawZoom = useCallback(
+   211→   211→    (canvas: HTMLCanvasElement | null): void => {
+   212→   212→      zoomRef.current = canvas;
+   213→   213→      if (canvas && design) {
+   214→   214→        drawMarker(canvas, design, {
+   215→   215→          name,
+   216→   216→          id,
+   217→   217→          size: 1100,
+   218→   218→          dpr: Math.min(window.devicePixelRatio || 1, 2),
+   219→   219→        });
+   220→   220→      }
+   221→   221→    },
+   222→   222→    [design, name, id, fontsReady]
+   223→   223→  );
+   224→   224→
+   225→   225→  const addToHistory = (config: MarkerConfig): void => {
+   226→   226→    setHistory((prev) => {
+   227→   227→      const sig = signature(config);
+   228→   228→      const rest = prev.filter((it) => signature(it) !== sig);
+   229→   229→      // ts всегда больше предыдущего — уникальные ключи и корректное удаление
+   230→   230→      const ts = Math.max(Date.now(), (rest[0]?.ts ?? 0) + 1);
+   231→   231→      return [{ ...config, ts }, ...rest].slice(0, 40);
+   232→   232→    });
+   233→   233→  };
+   234→   234→
+   235→   235→  const saveBlob = (blob: Blob, fileName: string): void => {
+   236→   236→    const url = URL.createObjectURL(blob);
+   237→   237→    const a = document.createElement("a");
+   238→   238→    a.href = url;
+   239→   239→    a.download = fileName;
+   240→   240→    document.body.appendChild(a);
+   241→   241→    a.click();
+   242→   242→    a.remove();
+   243→   243→    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+   244→   244→  };
+   245→   245→
+   246→   246→  const handleDownload = async (): Promise<void> => {
+   247→   247→    if (!name.trim() || !design) {
+   248→   248→      toast({
+   249→   249→        title: "Введите название",
+   250→   250→        description: "Оно напечатается над меткой и задаст уникальный узор.",
+   251→   251→        variant: "destructive",
+   252→   252→        duration: 3500,
+   253→   253→      });
+   254→   254→      return;
+   255→   255→    }
+   256→   256→    try {
+   257→   257→      const blob = await exportMarkerPng(design, { name, id, size: EXPORT_SIZE, dpr: 1 });
+   258→   258→      saveBlob(blob, markerFileName(name, id));
+   259→   259→      addToHistory({ name, id });
+   260→   260→      toast({
+   261→   261→        title: "PNG сохранён",
+   262→   262→        description: `Метка «${name.trim()}» — 2048 px по ширине.`,
+   263→   263→        variant: "success",
+   264→   264→        duration: 3000,
+   265→   265→      });
+   266→   266→    } catch {
+   267→   267→      toast({ title: "Не удалось создать PNG", variant: "destructive", duration: 3500 });
+   268→   268→    }
+   269→   269→  };
+   270→   270→
+   271→   271→  const handlePrint = (): void => {
+   272→   272→    if (!name.trim() || !design) {
+   273→   273→      toast({
+   274→   274→        title: "Введите название",
+   275→   275→        description: "Оно напечатается над меткой и задаст уникальный узор.",
+   276→   276→        variant: "destructive",
+   277→   277→        duration: 3500,
+   278→   278→      });
+   279→   279→      return;
+   280→   280→    }
+   281→   281→    const url = renderMarkerDataUrl(design, { name, id, size: 1600, dpr: 1 });
+   282→   282→    setPrintLoaded(0);
+   283→   283→    setPrintJob({ images: [url], labels: [name.trim()], sizeCm: printSizeCm, batch: false });
+   284→   284→  };
+   285→   285→
+   286→   286→  /** Лист A4 со всеми метками из истории — сетка 2 колонки */
+   287→   287→  const handlePrintAll = (): void => {
+   288→   288→    if (history.length === 0) return;
+   289→   289→    const jobs = history
+   290→   290→      .map((it) => ({ it, design: createMarkerDesign(it.id) }))
+   291→   291→      .filter((j): j is { it: HistoryItem; design: MarkerDesign } => j.design !== null);
+   292→   292→    setPrintJob({
+   293→   293→      images: jobs.map((j) =>
+   294→   294→        renderMarkerDataUrl(j.design, { name: j.it.name, id: j.it.id, size: 1100, dpr: 1 })
+   295→   295→      ),
+   296→   296→      labels: jobs.map((j) => j.it.name),
+   297→   297→      sizeCm: 8.5,
+   298→   298→      batch: true,
+   299→   299→    });
+   300→   300→    setPrintLoaded(0);
+   301→   301→  };
+   302→   302→
+   303→   303→  const loadItem = (item: HistoryItem): void => {
+   304→   304→    setName(item.name);
+   305→   305→    toast({ title: "Метка загружена", description: `«${item.name}»`, variant: "success", duration: 2500 });
+   306→   306→  };
+   307→   307→
+   308→   308→  const downloadItem = async (item: HistoryItem): Promise<void> => {
+   309→   309→    try {
+   310→   310→      const itemDesign = createMarkerDesign(item.id);
+   311→   311→      if (!itemDesign) throw new Error("Пустой ID метки");
+   312→   312→      const blob = await exportMarkerPng(itemDesign, { name: item.name, id: item.id, size: EXPORT_SIZE, dpr: 1 });
+   313→   313→      saveBlob(blob, markerFileName(item.name, item.id));
+   314→   314→      toast({ title: "PNG сохранён", description: `Метка «${item.name}».`, variant: "success", duration: 2500 });
+   315→   315→    } catch {
+   316→   316→      toast({ title: "Не удалось создать PNG", variant: "destructive", duration: 3500 });
+   317→   317→    }
+   318→   318→  };
+   319→   319→
+   320→   320→  const deleteItem = (item: HistoryItem): void => {
+   321→   321→    setHistory((prev) => prev.filter((it) => it.ts !== item.ts));
+   322→   322→    toast({
+   323→   323→      title: "Метка удалена из истории",
+   324→   324→      description: `«${item.name}»`,
+   325→   325→      duration: 5000,
+   326→   326→      action: (
+   327→   327→        <ToastAction
+   328→   328→          altText="Вернуть удалённую метку"
+   329→   329→          onClick={() => setHistory((prev) => [item, ...prev])}
+   330→   330→        >
+   331→   331→          Вернуть
+   332→   332→        </ToastAction>
+   333→   333→      ),
+   334→   334→    });
+   335→   335→  };
+   336→   336→
+   337→   337→  const clearHistory = (): void => {
+   338→   338→    if (history.length === 0) return;
+   339→   339→    setHistory([]);
+   340→   340→    setConfirmClear(false);
+   341→   341→    toast({ title: "История очищена", duration: 3000 });
+   342→   342→  };
+   343→   343→
+   344→   344→  const markImgLoaded = (): void => setPrintLoaded((n) => n + 1);
+   345→   345→
+   346→   346→  const copyId = async (value: string): Promise<void> => {
+   347→   347→    try {
+   348→   348→      await navigator.clipboard.writeText(value);
+   349→   349→      toast({ title: "ID скопирован", description: value, variant: "success", duration: 2000 });
+   350→   350→    } catch {
+   351→   351→      toast({ title: "Не удалось скопировать ID", variant: "destructive", duration: 2500 });
+   352→   352→    }
+   353→   353→  };
+   354→   354→
+   355→   355→  const printSheet = printJob
+   356→   356→    ? createPortal(
+   357→   357→        printJob.batch ? (
+   358→   358→          /* Лист всех меток: обычный поток — многостраничная печать работает сама */
+   359→   359→          <div className="hidden bg-white print:block">
+   360→   360→            <div className="mx-auto grid w-fit grid-cols-2 gap-x-[1cm] gap-y-[1cm] py-[0.5cm]">
+   361→   361→              {printJob.images.map((url, i) => (
+   362→   362→                <figure key={i} className="m-0 break-inside-avoid">
+   363→   363→                  <img
+   364→   364→                    src={url}
+   365→   365→                    alt={`Метка ${printJob.labels[i]} для печати`}
+   366→   366→                    style={{ width: `${printJob.sizeCm}cm`, height: "auto" }}
+   367→   367→                    onLoad={markImgLoaded}
+   368→   368→                    onError={markImgLoaded}
+   369→   369→                  />
+   370→   370→                </figure>
+   371→   371→              ))}
+   372→   372→            </div>
+   373→   373→          </div>
+   374→   374→        ) : (
+   375→   375→          <div className="fixed inset-0 z-[100] hidden items-center justify-center bg-white print:flex">
+   376→   376→            <img
+   377→   377→              src={printJob.images[0]}
+   378→   378→              alt={`Метка ${printJob.labels[0]} для печати`}
+   379→   379→              style={{ width: `${printJob.sizeCm}cm`, height: "auto" }}
+   380→   380→              onLoad={markImgLoaded}
+   381→   381→              onError={markImgLoaded}
+   382→   382→            />
+   383→   383→          </div>
+   384→   384→        ),
+   385→   385→        document.body
+   386→   386→      )
+   387→   387→    : null;
+   388→   388→
+   389→   389→  const downloadDisabled = !name.trim();
+   390→   390→
+   391→   391→  return (
+   392→   392→    <>
+   393→   393→      {printSheet}
+   394→   394→
+   395→   395→      <div className="grid items-start gap-6 lg:grid-cols-[minmax(320px,400px)_1fr]">
+   396→   396→        {/* Панель метки */}
+   397→   397→        <Card className="anim-rise rounded-[28px] border-stone-200/80 bg-white shadow-soft">
+   398→   398→          <CardContent className="space-y-6">
+   399→   399→            {/* Название — единственный ввод: задаёт и подпись, и уникальный узор */}
+   400→   400→            <div className="space-y-2">
+   401→   401→              <div className="flex items-center justify-between gap-3">
+   402→   402→                <Label htmlFor="marker-name" className="text-sm font-medium text-stone-700">
+   403→   403→                  Название метки
+   404→   404→                </Label>
+   405→   405→                {/* Счётчик виден только у самого лимита — не захламляет обычный ввод */}
+   406→   406→                {name.length >= 45 && (
+   407→   407→                  <span
+   408→   408→                    aria-live="polite"
+   409→   409→                    className={`font-mono text-xs tabular-nums ${
+   410→   410→                      name.length >= 58 ? "text-orange-600" : "text-stone-400"
+   411→   411→                    }`}
+   412→   412→                  >
+   413→   413→                    {name.length} / 60
+   414→   414→                  </span>
+   415→   415→                )}
+   416→   416→              </div>
+   417→   417→              <div className="relative">
+   418→   418→                <Input
+   419→   419→                  id="marker-name"
+   420→   420→                  ref={nameInputRef}
+   421→   421→                  value={name}
+   422→   422→                  maxLength={60}
+   423→   423→                  onChange={(e) => setName(e.target.value)}
+   424→   424→                  onKeyDown={(e) => {
+   425→   425→                    if (e.key === "Enter") void handleDownload();
+   426→   426→                  }}
+   427→   427→                  placeholder="Например: Красная спортивная"
+   428→   428→                  className="h-14 rounded-2xl border-stone-200 bg-stone-50/80 pr-12 text-[15px] text-stone-900 caret-orange-600 placeholder:text-stone-400 focus-visible:border-stone-300 focus-visible:ring-stone-400/25"
+   429→   429→                />
+   430→   430→                {name.length > 0 && (
+   431→   431→                  <button
+   432→   432→                    type="button"
+   433→   433→                    onClick={() => {
+   434→   434→                      setName("");
+   435→   435→                      nameInputRef.current?.focus();
+   436→   436→                    }}
+   437→   437→                    aria-label="Очистить название"
+   438→   438→                    className="absolute inset-y-0 right-3 my-auto grid size-7 place-items-center rounded-full text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50"
+   439→   439→                  >
+   440→   440→                    <X className="size-4" aria-hidden="true" />
+   441→   441→                  </button>
+   442→   442→                )}
+   443→   443→              </div>
+   444→   444→              <p className="text-xs text-stone-500">
+   445→   445→                Название печатается над меткой и задаёт её уникальный узор
+   446→   446→              </p>
+   447→   447→            </div>
+   448→   448→
+   449→   449→            {/* Действия */}
+   450→   450→            <div className="flex flex-col gap-3 sm:flex-row">
+   451→   451→              <Button
+   452→   452→                type="button"
+   453→   453→                onClick={handleDownload}
+   454→   454→                disabled={downloadDisabled}
+   455→   455→                className="h-12 flex-1 rounded-full bg-stone-900 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
+   456→   456→              >
+   457→   457→                <Download className="size-5" aria-hidden="true" />
+   458→   458→                Скачать PNG
+   459→   459→              </Button>
+   460→   460→              <Button
+   461→   461→                type="button"
+   462→   462→                variant="outline"
+   463→   463→                onClick={handlePrint}
+   464→   464→                disabled={downloadDisabled}
+   465→   465→                className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
+   466→   466→              >
+   467→   467→                <Printer className="size-5" aria-hidden="true" />
+   468→   468→                Печать
+   469→   469→              </Button>
+   470→   470→            </div>
+   471→   471→
+   472→   472→            {/* Размер печати */}
+   473→   473→            <div className="space-y-2">
+   474→   474→              <Label htmlFor="marker-print-size" className="text-sm font-medium text-stone-700">
+   475→   475→                Размер при печати
+   476→   476→              </Label>
+   477→   477→              <ToggleGroup
+   478→   478→                id="marker-print-size"
+   479→   479→                type="single"
+   480→   480→                value={String(printSizeCm)}
+   481→   481→                onValueChange={(v) => {
+   482→   482→                  if (v) setPrintSizeCm(Number(v));
+   483→   483→                }}
+   484→   484→                aria-label="Размер при печати"
+   485→   485→                className="h-12 w-full gap-1 rounded-full border border-stone-200/80 bg-stone-100/70 p-1 shadow-none"
+   486→   486→              >
+   487→   487→                {[10, 13, 16].map((cm) => (
+   488→   488→                  <ToggleGroupItem
+   489→   489→                    key={cm}
+   490→   490→                    value={String(cm)}
+   491→   491→                    aria-label={`${cm} сантиметров`}
+   492→   492→                    className="h-10 flex-1 rounded-full border-0 bg-transparent px-2 text-sm font-medium text-stone-500 shadow-none transition-colors hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white"
+   493→   493→                  >
+   494→   494→                    {cm} см
+   495→   495→                  </ToggleGroupItem>
+   496→   496→                ))}
+   497→   497→              </ToggleGroup>
+   498→   498→            </div>
+   499→   499→          </CardContent>
+   500→   500→        </Card>
+   501→   501→
+   502→   502→        {/* Предпросмотр */}
+   503→   503→        <div className="anim-rise anim-rise-delay-1 lg:sticky lg:top-24">
+   504→   504→          <Card className="rounded-[28px] border-stone-200/80 bg-white shadow-soft">
+   505→   505→            <CardHeader>
+   506→   506→              <CardTitle className="text-[17px] font-semibold tracking-tight text-stone-900">Предпросмотр</CardTitle>
+   507→   507→              <CardAction>
+   508→   508→                {id ? (
+   509→   509→                  <button
+   510→   510→                    type="button"
+   511→   511→                    onClick={() => void copyId(id)}
+   512→   512→                    title="Скопировать ID"
+   513→   513→                    aria-label={`Скопировать ID ${id}`}
+   514→   514→                    className="-mx-1 inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-mono text-xs tracking-wider text-orange-700 transition-colors hover:bg-orange-50 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/60"
+   515→   515→                  >
+   516→   516→                    {id}
+   517→   517→                    <Copy className="size-3.5 opacity-60" aria-hidden="true" />
+   518→   518→                  </button>
+   519→   519→                ) : (
+   520→   520→                  <span className="font-mono text-xs tracking-wider text-stone-400">—</span>
+   521→   521→                )}
+   522→   522→              </CardAction>
+   523→   523→            </CardHeader>
+   524→   524→            <CardContent>
+   525→   525→              {design ? (
+   526→   526→                <div className="mx-auto max-w-[480px] rounded-[24px] bg-stone-100/80 p-5">
+   527→   527→                  <button
+   528→   528→                    type="button"
+   529→   529→                    onClick={() => setZoomOpen(true)}
+   530→   530→                    title="Открыть метку крупно"
+   531→   531→                    aria-label="Открыть метку крупно"
+   532→   532→                    className="anim-paper group/zoom relative mx-auto block w-full cursor-zoom-in overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90 transition-shadow duration-300 hover:shadow-soft-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300"
+   533→   533→                  >
+   534→   534→                    <canvas
+   535→   535→                      ref={previewRef}
+   536→   536→                      className="block h-auto w-full"
+   537→   537→                      aria-label="Предпросмотр метки"
+   538→   538→                    />
+   539→   539→                    {/* Подсказка зума: появляется при наведении */}
+   540→   540→                    <span className="pointer-events-none absolute right-3 top-3 grid size-8 place-items-center rounded-full bg-white/85 text-stone-700 opacity-0 shadow-soft-sm backdrop-blur-sm transition-opacity duration-200 group-hover/zoom:opacity-100">
+   541→   541→                      <Maximize2 className="size-4" aria-hidden="true" />
+   542→   542→                    </span>
+   543→   543→                  </button>
+   544→   544→                </div>
+   545→   545→              ) : (
+   546→   546→                /* Пустое состояние: рамка-заготовка вместо пустой белой бумаги */
+   547→   547→                <div className="mx-auto grid aspect-square max-w-[480px] place-items-center rounded-[24px] border-2 border-dashed border-stone-300/80 bg-stone-100/60 px-6 text-center">
+   548→   548→                  <div>
+   549→   549→                    <ScanLine className="mx-auto size-10 text-stone-400" aria-hidden="true" />
+   550→   550→                    <p className="mt-3 text-sm text-stone-500">
+   551→   551→                      Введите название — здесь появится метка
+   552→   552→                    </p>
+   553→   553→                  </div>
+   554→   554→                </div>
+   555→   555→              )}
+   556→   556→            </CardContent>
+   557→   557→          </Card>
+   558→   558→        </div>
+   559→   559→      </div>
+   560→   560→
+   561→   561→      {/* История */}
+   562→   562→      <section className="anim-rise anim-rise-delay-2 mt-12 lg:mt-14" aria-labelledby="history-heading">
+   563→   563→        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-3">
+   564→   564→          <div className="flex items-center gap-2.5">
+   565→   565→            <History className="size-4 text-stone-400" aria-hidden="true" />
+   566→   566→            <h2 id="history-heading" className="text-xl font-semibold tracking-tight text-stone-900">
+   567→   567→              История меток
+   568→   568→            </h2>
+   569→   569→            <Badge variant="secondary" className="bg-stone-100 text-stone-600 tabular-nums">
+   570→   570→              {history.length}
+   571→   571→            </Badge>
+   572→   572→          </div>
+   573→   573→          {history.length > 0 && (
+   574→   574→            <div className="flex items-center gap-1">
+   575→   575→              <Button
+   576→   576→                variant="ghost"
+   577→   577→                size="sm"
+   578→   578→                onClick={handlePrintAll}
+   579→   579→                title="Распечатать лист со всеми метками"
+   580→   580→                className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700"
+   581→   581→              >
+   582→   582→                <Printer className="size-4" aria-hidden="true" />
+   583→   583→                Печать всех
+   584→   584→              </Button>
+   585→   585→              <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+   586→   586→                <AlertDialogTrigger asChild>
+   587→   587→                  <Button
+   588→   588→                    variant="ghost"
+   589→   589→                    size="sm"
+   590→   590→                    className="rounded-full text-stone-500 hover:bg-red-50 hover:text-red-600"
+   591→   591→                  >
+   592→   592→                    <Trash2 className="size-4" aria-hidden="true" />
+   593→   593→                    Очистить
+   594→   594→                  </Button>
+   595→   595→                </AlertDialogTrigger>
+   596→   596→                <AlertDialogContent className="rounded-[24px] border-stone-200/80 bg-white text-stone-900 shadow-soft">
+   597→   597→                  <AlertDialogHeader>
+   598→   598→                    <AlertDialogTitle className="text-stone-900">
+   599→   599→                      Очистить историю?
+   600→   600→                    </AlertDialogTitle>
+   601→   601→                    <AlertDialogDescription className="text-stone-500">
+   602→   602→                      Все сохранённые метки ({history.length}) пропадут из списка.
+   603→   603→                      Скачанные PNG-файлы это не затронет.
+   604→   604→                    </AlertDialogDescription>
+   605→   605→                  </AlertDialogHeader>
+   606→   606→                  <AlertDialogFooter>
+   607→   607→                    <AlertDialogCancel className="rounded-full border-transparent bg-stone-100 text-stone-700 hover:bg-stone-200 hover:text-stone-900">
+   608→   608→                      Отмена
+   609→   609→                    </AlertDialogCancel>
+   610→   610→                    <AlertDialogAction
+   611→   611→                      onClick={clearHistory}
+   612→   612→                      className="rounded-full bg-red-600 text-white hover:bg-red-500"
+   613→   613→                    >
+   614→   614→                      Очистить
+   615→   615→                    </AlertDialogAction>
+   616→   616→                  </AlertDialogFooter>
+   617→   617→                </AlertDialogContent>
+   618→   618→              </AlertDialog>
+   619→   619→            </div>
+   620→   620→          )}
+   621→   621→        </div>
+   622→   622→
+   623→   623→        {history.length === 0 ? (
+   624→   624→          <div className="rounded-[24px] border border-dashed border-stone-300/80 bg-white/60 px-6 py-8 text-center">
+   625→   625→            <Shapes className="mx-auto size-8 text-stone-300" aria-hidden="true" />
+   626→   626→            <p className="mt-3 text-sm text-stone-500">
+   627→   627→              Скачайте первую метку — она появится здесь.
+   628→   628→            </p>
+   629→   629→          </div>
+   630→   630→        ) : (
+   631→   631→          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+   632→   632→            {history.map((item, i) => (
+   633→   633→              <HistoryCard
+   634→   634→                key={item.ts}
+   635→   635→                item={item}
+   636→   636→                index={i}
+   637→   637→                onDownload={downloadItem}
+   638→   638→                onLoad={loadItem}
+   639→   639→                onDelete={deleteItem}
+   640→   640→              />
+   641→   641→            ))}
+   642→   642→          </div>
+   643→   643→        )}
+   644→   644→      </section>
+   645→   645→
+   646→   646→      {/* Мобильная липкая панель: скачать, не прокручивая наверх */}
+   647→   647→      {design && (
+   648→   648→        <div className="marker-sticky-bar fixed inset-x-3 bottom-3 z-30 rounded-[24px] border border-stone-200/80 bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-soft-lg backdrop-blur-md print:hidden lg:hidden">
+   649→   649→          <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+   650→   650→            <div className="min-w-0 flex-1">
+   651→   651→              <div className="truncate text-sm font-medium text-stone-900" title={name}>
+   652→   652→                {name}
+   653→   653→              </div>
+   654→   654→              <div className="font-mono text-xs tracking-wider text-orange-700">{id}</div>
+   655→   655→            </div>
+   656→   656→            <Button
+   657→   657→              type="button"
+   658→   658→              onClick={handleDownload}
+   659→   659→              className="h-11 shrink-0 rounded-full bg-stone-900 px-5 font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 active:scale-[0.98]"
+   660→   660→            >
+   661→   661→              <Download className="size-5" aria-hidden="true" />
+   662→   662→              Скачать
+   663→   663→            </Button>
+   664→   664→          </div>
+   665→   665→        </div>
+   666→   666→      )}
+   667→   667→
+   668→   668→      {/* Крупный просмотр метки */}
+   669→   669→      <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
+   670→   670→        <DialogContent className="max-w-[min(92vw,720px)] rounded-[28px] border-stone-200/80 bg-white p-4 shadow-soft sm:p-6">
+   671→   671→          <DialogHeader className="sr-only">
+   672→   672→            <DialogTitle>Метка крупно</DialogTitle>
+   673→   673→            <DialogDescription>Увеличенный предпросмотр метки</DialogDescription>
+   674→   674→          </DialogHeader>
+   675→   675→          <div className="mx-auto w-full max-w-[640px] rounded-[24px] bg-stone-100/80 p-4 sm:p-5">
+   676→   676→            <div className="overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90">
+   677→   677→              <canvas
+   678→   678→                ref={drawZoom}
+   679→   679→                className="block h-auto w-full"
+   680→   680→                aria-label="Увеличенный предпросмотр метки"
+   681→   681→              />
+   682→   682→            </div>
+   683→   683→          </div>
+   684→   684→          <DialogFooter className="mt-1 sm:justify-center">
+   685→   685→            <Button
+   686→   686→              type="button"
+   687→   687→              onClick={handleDownload}
+   688→   688→              disabled={downloadDisabled}
+   689→   689→              className="h-11 rounded-full bg-stone-900 px-6 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100"
+   690→   690→            >
+   691→   691→              <Download className="size-5" aria-hidden="true" />
+   692→   692→              Скачать PNG
+   693→   693→            </Button>
+   694→   694→          </DialogFooter>
+   695→   695→        </DialogContent>
+   696→   696→      </Dialog>
+   697→   697→
+   698→   698→      {/* Скрытая подсказка для скринридеров о назначении меток */}
+   699→   699→      <p className="sr-only">
+   700→   700→        Метки-трекеры для AR: камера различает узор метки и привязывает к ней
+   701→   701→        трёхмерную модель автомобиля. У каждой метки свой уникальный узор.
+   702→   702→      </p>
+   703→   703→    </>
+   704→   704→  );
+   705→   705→}
+   706→   706→
