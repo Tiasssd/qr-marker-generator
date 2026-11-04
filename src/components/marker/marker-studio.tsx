@@ -73,6 +73,7 @@ import {
   clearCloudMarkers,
   cloudEnabled,
   deleteCloudMarker,
+  describeCloudError,
   fetchCloudMarkers,
   pushCloudMarker,
   type CloudMarker,
@@ -87,6 +88,8 @@ type CloudStatus = "off" | "syncing" | "on" | "error";
 interface CloudState {
   status: CloudStatus;
   items: CloudMarker[];
+  /** Человекочитаемая причина последнего сбоя (null — сбоя не было) */
+  failReason: string | null;
 }
 
 const CLOUD_ON = cloudEnabled();
@@ -215,6 +218,7 @@ export function MarkerStudio() {
   const [cloud, setCloud] = useState<CloudState>(() => ({
     status: CLOUD_ON ? "syncing" : "off",
     items: [],
+    failReason: null,
   }));
 
   const previewRef = useRef<HTMLCanvasElement>(null);
@@ -321,7 +325,11 @@ export function MarkerStudio() {
         }
       }
 
-      setCloud({ status: migrationFailed ? "error" : "on", items });
+      setCloud({
+        status: migrationFailed ? "error" : "on",
+        items,
+        failReason: migrationFailed ? "не удалось перенести локальную историю" : null,
+      });
       if (migrationFailed) return;
       cloudReadyRef.current = true;
 
@@ -360,7 +368,7 @@ export function MarkerStudio() {
             });
           }
           items = await fetchCloudMarkers();
-          setCloud({ status: "on", items });
+          setCloud({ status: "on", items, failReason: null });
         }
       }
 
@@ -384,8 +392,12 @@ export function MarkerStudio() {
         setHistory(next);
         void Promise.allSettled(stale.map((it) => deleteMarker(it.id)));
       }
-    } catch {
-      setCloud((prev) => ({ ...prev, status: "error" }));
+    } catch (err) {
+      setCloud((prev) => ({
+        ...prev,
+        status: "error",
+        failReason: describeCloudError(err),
+      }));
     }
   }, []);
 
@@ -517,8 +529,12 @@ export function MarkerStudio() {
             void saveMarker({ ...localRecord, synced: true });
             void refreshCloud(false);
           })
-          .catch(() => {
-            setCloud((current) => ({ ...current, status: "error" }));
+          .catch((err: unknown) => {
+            setCloud((current) => ({
+              ...current,
+              status: "error",
+              failReason: describeCloudError(err),
+            }));
           });
       }
     },
@@ -566,8 +582,12 @@ export function MarkerStudio() {
             void saveMarker({ ...localRecord, synced: true });
             void refreshCloud(false);
           })
-          .catch(() => {
-            setCloud((current) => ({ ...current, status: "error" }));
+          .catch((err: unknown) => {
+            setCloud((current) => ({
+              ...current,
+              status: "error",
+              failReason: describeCloudError(err),
+            }));
           });
       }
     },
@@ -831,7 +851,13 @@ export function MarkerStudio() {
     if (CLOUD_ON) {
       void deleteCloudMarker(item.id)
         .then(() => refreshCloud(false))
-        .catch(() => setCloud((current) => ({ ...current, status: "error" })));
+        .catch((err: unknown) =>
+          setCloud((current) => ({
+            ...current,
+            status: "error",
+            failReason: describeCloudError(err),
+          }))
+        );
     }
     toast({
       title: CLOUD_ON ? "Метка удалена из общей БД" : "Метка удалена из истории",
@@ -1280,7 +1306,7 @@ export function MarkerStudio() {
                     : cloud.status === "on"
                       ? `${pluralMarkers(cloud.items.length)} в общей БД — обновить список`
                       : cloud.status === "error"
-                        ? "Общая БД недоступна — попробовать снова"
+                        ? `Общая БД недоступна — ${cloud.failReason ?? "попробовать снова"}`
                         : "Идёт синхронизация с общей БД"
                 }
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-card px-2.5 text-[11px] font-medium text-ink-soft transition-colors hover:bg-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/20"
@@ -1373,7 +1399,9 @@ export function MarkerStudio() {
               <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-red-200/70 bg-red-50/60 px-3 py-2.5 text-[11px] leading-relaxed text-red-800 dark:border-red-900/40 dark:bg-red-950/25 dark:text-red-300">
                 <CloudOff className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 <span>
-                  Общая БД недоступна. Показан локальный кэш.{" "}
+                  Общая БД недоступна
+                  {cloud.failReason ? ` — ${cloud.failReason}` : ""}. Показан
+                  локальный кэш.{" "}
                   <button
                     type="button"
                     onClick={() => void refreshCloud()}

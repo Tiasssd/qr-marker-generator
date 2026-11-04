@@ -42,6 +42,47 @@ function headers(extra?: Record<string, string>): HeadersInit {
   };
 }
 
+/* Таймаут запроса. AbortSignal.timeout появился только в Safari 16.4 /
+   iOS 16.4: на более старых телефонах вызов бросает TypeError мгновенно,
+   и общая БД «недоступна» навсегда. Поэтому — три ступени:
+   есть AbortSignal.timeout → используем; иначе ручной AbortController;
+   нет и его → запрос вовсе без таймаута (лучше медленно, чем никогда). */
+function timeoutSignal(ms: number): AbortSignal | undefined {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    try {
+      return AbortSignal.timeout(ms);
+    } catch {
+      /* неожиданно сломался — падаем в фолбэк */
+    }
+  }
+  if (typeof AbortController !== "undefined") {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), ms);
+    return controller.signal;
+  }
+  return undefined;
+}
+
+/** Короткая причина сбоя для баннера «Общая БД недоступна» —
+    сразу видно, сеть это, таймаут или сервер */
+export function describeCloudError(err: unknown): string {
+  if (err instanceof DOMException) {
+    if (err.name === "TimeoutError" || err.name === "AbortError") {
+      return "таймаут запроса (10 с)";
+    }
+  }
+  /* fetch бросает TypeError при любой сетевой неудаче: нет DNS/TLS,
+     соединение оборвано или заблокировано оператором/файрволом */
+  if (err instanceof TypeError) {
+    return "нет сети или соединение блокируется";
+  }
+  if (err instanceof Error) {
+    const code = /(\d{3})/.exec(err.message)?.[1];
+    if (code) return `сервер ответил ${code}`;
+  }
+  return "ошибка синхронизации";
+}
+
 function sanitize(value: unknown): CloudMarker[] {
   if (!Array.isArray(value)) return [];
   const byId = new Map<string, CloudMarker>();
@@ -86,7 +127,7 @@ export async function fetchCloudMarkers(limit = 500): Promise<CloudMarker[]> {
   const url = `${SUPABASE_URL}${REST}?select=id,name,cells,created_at,updated_at&order=updated_at.desc&limit=${limit}`;
   const res = await fetch(url, {
     headers: headers({ Accept: "application/json" }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: timeoutSignal(TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Общая БД ответила ${res.status}`);
   return sanitize(await res.json());
@@ -104,7 +145,7 @@ export async function pushCloudMarker(record: CloudMarker): Promise<void> {
       Prefer: "resolution=merge-duplicates,return=minimal",
     }),
     body: JSON.stringify([clean]),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: timeoutSignal(TIMEOUT_MS),
   });
   if (!res.ok && res.status !== 201 && res.status !== 200) {
     throw new Error(`Общая БД не приняла метку (${res.status})`);
@@ -118,7 +159,7 @@ export async function deleteCloudMarker(id: string): Promise<void> {
   const res = await fetch(url, {
     method: "DELETE",
     headers: headers({ Prefer: "return=minimal" }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: timeoutSignal(TIMEOUT_MS),
   });
   if (!res.ok && res.status !== 204) {
     throw new Error(`Общая БД не удалила метку (${res.status})`);
@@ -131,7 +172,7 @@ export async function clearCloudMarkers(): Promise<void> {
   const res = await fetch(url, {
     method: "DELETE",
     headers: headers({ Prefer: "return=minimal" }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: timeoutSignal(TIMEOUT_MS),
   });
   if (!res.ok && res.status !== 204) {
     throw new Error(`Общая БД не очистилась (${res.status})`);
