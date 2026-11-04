@@ -52,6 +52,10 @@ export const PATTERN_CAPACITY = 10_612_596;
 const BORDER = 1.4;
 /** Белая отбивка между рамкой и матрицей (в модулях) */
 const QUIET = 1;
+/** Поля карточки — 2.5% ширины с каждой стороны */
+export const MARKER_MARGIN_RATIO = 0.025;
+/** Доля ширины карточки, которую занимает сама квадратная метка */
+export const MARKER_SIDE_RATIO = 1 - 2 * MARKER_MARGIN_RATIO;
 /** Сторона метки в модулях: рамка + отбивка + матрица + отбивка + рамка */
 const SIDE_MODULES = 2 * BORDER + 2 * QUIET + GRID; // 9.8
 
@@ -287,7 +291,7 @@ export function drawMarker(
   if (!ctx) return;
 
   /* Компактная вёрстка: тонкие поля — метка крупнее */
-  const margin = size * 0.025;
+  const margin = size * MARKER_MARGIN_RATIO;
   const nameText = name.trim();
   const hasName = nameText.length > 0;
   /* Без названия карточка — ровный квадрат: ни лишнего зазора,

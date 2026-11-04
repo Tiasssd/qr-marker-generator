@@ -47,6 +47,7 @@ import {
   deriveId,
   drawMarker,
   exportMarkerJpeg,
+  MARKER_SIDE_RATIO,
   markerFileName,
   PATTERN_CAPACITY,
   renderMarkerJpegDataUrl,
@@ -168,6 +169,7 @@ export function MarkerStudio() {
   const [dbLoading, setDbLoading] = useState(true);
   const [historyQuery, setHistoryQuery] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
+  const [pdfAllBusy, setPdfAllBusy] = useState(false);
   const [fontsReady, setFontsReady] = useState(false);
   const [cloud, setCloud] = useState<CloudState>(() => ({
     status: CLOUD_ON ? "syncing" : "off",
@@ -665,7 +667,8 @@ export function MarkerStudio() {
       const url = renderMarkerJpegDataUrl(design, { name, id, size: EXPORT_SIZE, dpr: 1 });
       const img = await loadImage(url);
       const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
-      const w = printSizeCm * 10;
+      /* printSizeCm — сторона самой квадратной метки, а не всей карточки */
+      const w = (printSizeCm * 10) / MARKER_SIDE_RATIO;
       const h = w * (img.naturalHeight / img.naturalWidth);
       pdf.addImage(url, "JPEG", (210 - w) / 2, (297 - h) / 2, w, h);
       pdf.setProperties({ title: `AR-marker ${id}` });
@@ -673,7 +676,7 @@ export function MarkerStudio() {
       rememberMarker({ name, id }, [...design.cells]);
       toast({
         title: "PDF для печати сохранён",
-        description: `«${name.trim()}» — ${printSizeCm} см на листе A4, с названием.`,
+        description: `«${name.trim()}» — метка ${printSizeCm} см на листе A4, с названием.`,
         variant: "success",
         duration: 3500,
       });
@@ -682,21 +685,19 @@ export function MarkerStudio() {
     }
   };
 
-  /** PDF-лист A4 со всеми метками (локальные + облачные) — сетка 2 колонки по 8.5 см */
+  /** PDF: все метки по 16 см, по одной на лист A4 */
   const handlePdfAll = (): void => {
-    if (history.length === 0 && cloudOnlyItems.length === 0) return;
+    if (pdfAllBusy) return;
+    const all = [...history, ...cloudOnlyItems];
+    if (all.length === 0) return;
+    setPdfAllBusy(true);
     void (async () => {
       try {
         const { jsPDF } = await import("jspdf");
         const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
-        const w = 85; // 8.5 см — 4 метки на страницу A4
-        const margin = 12;
-        const gapY = 14;
-        const xs = [margin, 210 - margin - w];
-        let col = 0;
-        let y = margin;
+        /* 16 см — сторона самой метки; карточка чуть шире из-за полей */
+        const w = (16 * 10) / MARKER_SIDE_RATIO;
         let placed = 0;
-        const all = [...history, ...cloudOnlyItems];
         for (const it of all) {
           const itemDesign =
             designFromCells(it.cells ?? []) ?? createMarkerDesign(it.id);
@@ -704,38 +705,29 @@ export function MarkerStudio() {
           const url = renderMarkerJpegDataUrl(itemDesign, {
             name: it.name,
             id: it.id,
-            size: 1100,
+            size: EXPORT_SIZE,
             dpr: 1,
           });
           const img = await loadImage(url);
           const h = w * (img.naturalHeight / img.naturalWidth);
-          /* не влезла по высоте — в соседнюю колонку, дальше на новый лист */
-          if (y + h > 297 - margin) {
-            if (col === 0) {
-              col = 1;
-              y = margin;
-            } else {
-              pdf.addPage();
-              col = 0;
-              y = margin;
-            }
-          }
-          pdf.addImage(url, "JPEG", xs[col], y, w, h);
-          y += h + gapY;
+          if (placed > 0) pdf.addPage();
+          pdf.addImage(url, "JPEG", (210 - w) / 2, (297 - h) / 2, w, h);
           placed++;
         }
         if (placed > 0) {
-          pdf.setProperties({ title: "AR markers sheet" });
-          saveBlob(pdf.output("blob"), markerFileName("Лист меток", "", "pdf"));
+          pdf.setProperties({ title: "AR markers 16 cm" });
+          saveBlob(pdf.output("blob"), markerFileName("Метки 16 см", "", "pdf"));
           toast({
             title: "PDF со всеми метками сохранён",
-            description: `${placed} шт. по 8.5 см, лист A4.`,
+            description: `${placed} шт. по 16 см, по одной на лист A4.`,
             variant: "success",
-            duration: 3000,
+            duration: 3500,
           });
         }
       } catch {
         toast({ title: "Не удалось создать PDF", variant: "destructive", duration: 3500 });
+      } finally {
+        setPdfAllBusy(false);
       }
     })();
   };
@@ -1008,12 +1000,16 @@ export function MarkerStudio() {
                     key={cm}
                     value={String(cm)}
                     aria-label={`${cm} сантиметров`}
-                    className="h-10 flex-1 rounded-full border-0 bg-transparent px-2 text-sm font-medium text-stone-500 shadow-none transition-colors hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white dark:text-stone-400 dark:hover:text-stone-200 dark:data-[state=on]:bg-stone-200 dark:data-[state=on]:text-stone-900 dark:data-[state=on]:hover:bg-stone-200"
+                    className="h-10 min-w-0 flex-1 select-none rounded-full border-0 bg-transparent px-3 text-sm font-medium text-stone-500 shadow-none transition-[background-color,color,box-shadow] duration-200 hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:font-semibold data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white dark:text-stone-400 dark:hover:text-stone-200 dark:data-[state=on]:bg-stone-200 dark:data-[state=on]:text-stone-900 dark:data-[state=on]:hover:bg-stone-200"
                   >
                     {cm} см
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
+              <p className="text-[11px] leading-relaxed text-stone-400 dark:text-stone-500">
+                Размер — сторона самой метки. «PDF всех» всегда печатает по 16 см, по одной
+                метке на лист.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -1181,11 +1177,15 @@ export function MarkerStudio() {
                   variant="ghost"
                   size="sm"
                   onClick={handlePdfAll}
-                  title="Скачать лист A4 со всеми метками (8.5 см)"
-                  className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-200"
+                  disabled={pdfAllBusy}
+                  title="Скачать PDF: все метки по 16 см, по одной на лист A4"
+                  className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700 disabled:pointer-events-none disabled:opacity-50 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                 >
-                  <FileDown className="size-4" aria-hidden="true" />
-                  PDF всех
+                  <FileDown
+                    className={`size-4 ${pdfAllBusy ? "animate-pulse" : ""}`}
+                    aria-hidden="true"
+                  />
+                  {pdfAllBusy ? "Готовим…" : "PDF всех"}
                 </Button>
                 <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
                   <AlertDialogTrigger asChild>
