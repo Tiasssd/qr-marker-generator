@@ -16,6 +16,8 @@
   --color-mat: var(--mat);
   --color-selected: var(--selected);
   --color-selected-ink: var(--selected-ink);
+  --color-print-ink: var(--print-ink);
+  --color-print-soft: var(--print-soft);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -72,6 +74,9 @@
   --mat: #1a1815;
   --selected: var(--card);
   --selected-ink: #1b1916;
+  /* Текст на белой бумаге не зависит от темы */
+  --print-ink: #1b1916;
+  --print-soft: #6f675a;
 
   --background: var(--paper);
   --foreground: var(--ink);
@@ -123,6 +128,8 @@
   --mat: #0d0c0a;
   --selected: #f3efe6;
   --selected-ink: #1b1916;
+  --print-ink: #1b1916;
+  --print-soft: #6f675a;
 
   --background: var(--paper);
   --foreground: var(--ink);

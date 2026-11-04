@@ -1171,7 +1171,11 @@ export function MarkerStudio() {
                   disabled={!design}
                   title={design ? "Открыть метку крупно" : "Введите название"}
                   aria-label={design ? "Открыть метку крупно" : "Введите название метки"}
-                  className="group/zoom relative block w-full cursor-zoom-in overflow-hidden bg-white p-2 text-left shadow-[0_24px_60px_-24px_rgba(0,0,0,0.55)] ring-1 ring-black/10 disabled:cursor-default"
+                  className={`group/zoom relative block w-full cursor-zoom-in overflow-hidden bg-white p-2 text-left shadow-[0_24px_60px_-24px_rgba(0,0,0,0.55)] ring-1 ring-black/10 disabled:cursor-default ${
+                    design
+                      ? ""
+                      : "flex aspect-[2048/2281] items-center justify-center"
+                  }`}
                 >
                   {design ? (
                     <canvas
@@ -1183,13 +1187,13 @@ export function MarkerStudio() {
                     <>
                       <SampleMarkerCanvas />
                       <span className="absolute inset-0 flex flex-col items-center justify-center bg-white/75 p-6 text-center">
-                        <span className="font-mono text-[10px] tracking-wide text-ink-muted">
+                        <span className="font-mono text-[10px] tracking-wide text-print-soft">
                           Макет
                         </span>
-                        <span className="mt-2 text-lg font-medium text-ink">
+                        <span className="mt-2 text-lg font-medium text-print-ink">
                           Введите название
                         </span>
-                        <span className="mt-1 text-xs text-ink-muted">
+                        <span className="mt-1 text-xs text-print-soft">
                           Узор и подпись появятся здесь
                         </span>
                       </span>
@@ -1209,7 +1213,7 @@ export function MarkerStudio() {
               </div>
             </div>
 
-            <div className="mt-7 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-white/10 pt-4 font-mono text-[10px] text-white/65">
+            <div className="mt-10 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-white/10 pt-4 font-mono text-[10px] text-white/65">
               <span>2048 px</span>
               <span className="text-white/30">/</span>
               <span>JPEG · RGB</span>
