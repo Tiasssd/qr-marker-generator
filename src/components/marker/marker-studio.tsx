@@ -61,16 +61,24 @@ import {
   type StorageMode,
 } from "@/lib/marker-db";
 import { Copy, Download, FileDown, History, Maximize2, Search, SearchX, Shapes, Share2, Trash2, TriangleAlert, Type, X, Cloud, CloudOff } from "lucide-react";
-import { cloudEnabled, fetchCloudMarkers, pushCloudMarker } from "@/lib/cloud";
+import {
+  clearCloudMarkers,
+  cloudEnabled,
+  deleteCloudMarker,
+  fetchCloudMarkers,
+  pushCloudMarker,
+  type CloudMarker,
+} from "@/lib/cloud";
 
 const EXPORT_SIZE = 2048;
+const CLOUD_MIGRATED_KEY = "ar-marker-cloud-migrated:v1";
 
 /* Статус облачной синхронизации: off — сборка без ключей (локальный режим),
    syncing — грузим, on — работает, error — облако недоступно */
 type CloudStatus = "off" | "syncing" | "on" | "error";
 interface CloudState {
   status: CloudStatus;
-  items: { name: string; created_at: string }[];
+  items: CloudMarker[];
 }
 
 const CLOUD_ON = cloudEnabled();
@@ -101,6 +109,35 @@ function toHistoryItem(record: MarkerRecord): HistoryItem {
     ts: record.updatedAt,
     createdAt: record.createdAt,
     cells: record.cells.length > 0 ? record.cells : undefined,
+    synced: record.synced !== false,
+  };
+}
+
+/* Запись из общей БД → элемент истории */
+function fromCloudItem(record: CloudMarker): HistoryItem {
+  const created = Date.parse(record.created_at) || Date.now();
+  const updated = Date.parse(record.updated_at) || created;
+  return {
+    name: record.name,
+    id: record.id,
+    ts: updated,
+    createdAt: created,
+    cells: record.cells.length > 0 ? record.cells : undefined,
+    fromCloud: true,
+    synced: true,
+  };
+}
+
+/* Элемент истории → запись для общей БД */
+function toCloudRecord(item: HistoryItem): CloudMarker {
+  const design = designFromCells(item.cells ?? []) ?? createMarkerDesign(item.id);
+  const created = item.createdAt ?? item.ts;
+  return {
+    id: item.id,
+    name: item.name,
+    cells: design ? [...design.cells] : [],
+    created_at: new Date(created).toISOString(),
+    updated_at: new Date(item.ts).toISOString(),
   };
 }
 
@@ -141,6 +178,7 @@ export function MarkerStudio() {
   const nameInputRef = useRef<HTMLInputElement>(null);
   const zoomRef = useRef<HTMLCanvasElement>(null);
   const historyRef = useRef<HistoryItem[]>([]);
+  const cloudReadyRef = useRef(false);
   const [zoomOpen, setZoomOpen] = useState(false);
 
   /* ID выводится из названия: разное название — другой узор,
@@ -162,11 +200,7 @@ export function MarkerStudio() {
     const localNames = new Set(history.map((it) => normalizeName(it.name)));
     return cloud.items
       .filter((c) => !localNames.has(normalizeName(c.name)))
-      .map((c) => ({
-        name: c.name,
-        id: deriveId(c.name),
-        ts: Date.parse(c.created_at) || Date.now(),
-      }));
+      .map(fromCloudItem);
   }, [cloud, history]);
 
   /* Поиск распространяется и на облачные метки */
@@ -192,7 +226,7 @@ export function MarkerStudio() {
     return null;
   }, [design, id, name, history, cloudOnlyItems]);
 
-  /* Загрузка списка из облака (первая + ручное обновление по клику на чип) */
+  /* Загрузка списка из общей БД (первая + ручное обновление + автоопрос) */
   const refreshCloud = useCallback(async (showSyncing = true): Promise<void> => {
     if (!CLOUD_ON) return;
     if (showSyncing) {
@@ -202,30 +236,138 @@ export function MarkerStudio() {
       }));
     }
     try {
-      const items = await fetchCloudMarkers();
-      setCloud({ status: "on", items });
+      const wasReady = cloudReadyRef.current;
+      let items = await fetchCloudMarkers();
+
+      /* Первый запуск с общей БД: если она пуста, переносим туда
+         локальную историю этого браузера. */
+      let migrationFailed = false;
+      let migrated = false;
+      try {
+        migrated = window.localStorage.getItem(CLOUD_MIGRATED_KEY) === "1";
+      } catch {
+        migrated = false;
+      }
+      if (!migrated) {
+        const local = historyRef.current;
+        if (items.length === 0 && local.length > 0) {
+          const results = await Promise.allSettled(
+            local.map((it) => pushCloudMarker(toCloudRecord(it)))
+          );
+          if (results.some((r) => r.status === "fulfilled")) {
+            items = await fetchCloudMarkers();
+            const syncedIds = new Set(items.map((it) => it.id));
+            const next = historyRef.current.map((it) =>
+              syncedIds.has(it.id) ? { ...it, synced: true } : it
+            );
+            historyRef.current = next;
+            setHistory(next);
+          } else {
+            migrationFailed = true;
+          }
+        }
+        if (!migrationFailed) {
+          try {
+            window.localStorage.setItem(CLOUD_MIGRATED_KEY, "1");
+          } catch {
+            // приватный режим — миграция просто повторится
+          }
+        }
+      }
+
+      setCloud({ status: migrationFailed ? "error" : "on", items });
+      if (migrationFailed) return;
+      cloudReadyRef.current = true;
+
+      /* Досылаем записи, которые не ушли в общую БД в прошлый раз */
+      const pending = historyRef.current.filter((it) => it.synced === false);
+      if (pending.length > 0) {
+        const results = await Promise.allSettled(
+          pending.map(async (it) => {
+            await pushCloudMarker(toCloudRecord(it));
+            return it.id;
+          })
+        );
+        const syncedIds = new Set(
+          results
+            .filter(
+              (r): r is PromiseFulfilledResult<string> => r.status === "fulfilled"
+            )
+            .map((r) => r.value)
+        );
+        if (syncedIds.size > 0) {
+          const next = historyRef.current.map((it) =>
+            syncedIds.has(it.id) ? { ...it, synced: true } : it
+          );
+          historyRef.current = next;
+          setHistory(next);
+          for (const id of syncedIds) {
+            const item = next.find((it) => it.id === id);
+            if (!item) continue;
+            void saveMarker({
+              id: item.id,
+              name: item.name,
+              cells: item.cells ?? [],
+              createdAt: item.createdAt ?? item.ts,
+              updatedAt: item.ts,
+              synced: true,
+            });
+          }
+          items = await fetchCloudMarkers();
+          setCloud({ status: "on", items });
+        }
+      }
+
+      /* Метки, удалённые в общей БД другими людьми, убираем из кэша.
+         Несинхронизированные (synced: false) не трогаем — они ещё ждут отправки.
+         На самом первом успешном ответе кэш не чистим, чтобы не потерять
+         локальную историю до миграции. */
+      if (!wasReady) return;
+      const cloudIds = new Set(items.map((it) => it.id));
+      const stale = historyRef.current.filter(
+        (it) =>
+          it.synced !== false &&
+          !cloudIds.has(it.id) &&
+          /* Свежая запись могла ещё не попасть в выборку — даём минуту */
+          Date.now() - it.ts > 60_000
+      );
+      if (stale.length > 0) {
+        const staleIds = new Set(stale.map((it) => it.id));
+        const next = historyRef.current.filter((it) => !staleIds.has(it.id));
+        historyRef.current = next;
+        setHistory(next);
+        void Promise.allSettled(stale.map((it) => deleteMarker(it.id)));
+      }
     } catch {
       setCloud((prev) => ({ ...prev, status: "error" }));
     }
   }, []);
 
   useEffect(() => {
-    /* Первичная загрузка: статус «syncing» уже стоит в initialState.
+    /* Ждём локальную историю, иначе миграция в общую БД увидит пустой список.
        setTimeout уводит setState из синхронного тела эффекта. */
+    if (dbLoading) return;
     const timer = window.setTimeout(() => {
       void refreshCloud(false);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [refreshCloud]);
+  }, [dbLoading, refreshCloud]);
 
-  /* Пуш в облако при «коммите» метки: скачивание, PDF или шеринг.
-     Fire-and-forget: сбой не мешает основной операции. */
-  const pushCloud = (n: string): void => {
+  /* Пока вкладка открыта — подтягиваем изменения других пользователей */
+  useEffect(() => {
     if (!CLOUD_ON) return;
-    void pushCloudMarker(n)
-      .then(() => refreshCloud())
-      .catch(() => setCloud((prev) => (prev.status === "on" ? { ...prev, status: "error" } : prev)));
-  };
+    const refresh = (): void => {
+      if (!document.hidden) void refreshCloud(false);
+    };
+    const timer = window.setInterval(refresh, 20000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [refreshCloud]);
 
   /* Загрузка истории из браузерной БД (IndexedDB → localStorage → память) */
   useEffect(() => {
@@ -284,49 +426,103 @@ export function MarkerStudio() {
       const createdAt = existing?.createdAt ?? Date.now();
       /* ts всегда растёт — без дублей ключей при быстрых нажатиях */
       const ts = Math.max(Date.now(), (prev[0]?.ts ?? 0) + 1);
+      const synced = !CLOUD_ON;
       const item: HistoryItem = {
         name: cleanName,
         id: config.id,
         ts,
         createdAt,
         cells: pattern.length > 0 ? pattern : undefined,
+        synced,
       };
 
       const next = [item, ...prev.filter((it) => it.id !== config.id)].slice(0, 500);
       historyRef.current = next;
       setHistory(next);
 
-      void saveMarker({
+      const localRecord = {
         id: config.id,
         name: cleanName,
         cells: pattern,
         createdAt,
         updatedAt: ts,
-      })
+        synced,
+      };
+
+      void saveMarker(localRecord)
         .then((mode) => setDbMode(mode))
         .catch(() => undefined);
+
+      if (CLOUD_ON) {
+        void pushCloudMarker(toCloudRecord(item))
+          .then(() => {
+            const syncedItem = { ...item, synced: true };
+            setHistory((current) => {
+              const updated = current.map((it) =>
+                it.id === syncedItem.id ? syncedItem : it
+              );
+              historyRef.current = updated;
+              return updated;
+            });
+            void saveMarker({ ...localRecord, synced: true });
+            void refreshCloud(false);
+          })
+          .catch(() => {
+            setCloud((current) => ({ ...current, status: "error" }));
+          });
+      }
     },
-    []
+    [refreshCloud]
   );
 
   /* Возврат удалённой метки (undo в тосте) */
-  const restoreMarker = useCallback((item: HistoryItem): void => {
-    const patternSource =
-      designFromCells(item.cells ?? []) ?? createMarkerDesign(item.id);
-    const pattern = patternSource ? [...patternSource.cells] : [];
-    const next = [item, ...historyRef.current.filter((it) => it.id !== item.id)].slice(0, 500);
-    historyRef.current = next;
-    setHistory(next);
-    void saveMarker({
-      id: item.id,
-      name: item.name,
-      cells: pattern,
-      createdAt: item.createdAt ?? item.ts,
-      updatedAt: item.ts,
-    })
-      .then((mode) => setDbMode(mode))
-      .catch(() => undefined);
-  }, []);
+  const restoreMarker = useCallback(
+    (item: HistoryItem): void => {
+      const patternSource =
+        designFromCells(item.cells ?? []) ?? createMarkerDesign(item.id);
+      const pattern = patternSource ? [...patternSource.cells] : [];
+      const synced = !CLOUD_ON;
+      const restored: HistoryItem = { ...item, cells: pattern, synced };
+      const next = [
+        restored,
+        ...historyRef.current.filter((it) => it.id !== item.id),
+      ].slice(0, 500);
+      historyRef.current = next;
+      setHistory(next);
+
+      const localRecord = {
+        id: item.id,
+        name: item.name,
+        cells: pattern,
+        createdAt: item.createdAt ?? item.ts,
+        updatedAt: item.ts,
+        synced,
+      };
+      void saveMarker(localRecord)
+        .then((mode) => setDbMode(mode))
+        .catch(() => undefined);
+
+      if (CLOUD_ON) {
+        void pushCloudMarker(toCloudRecord(restored))
+          .then(() => {
+            const syncedItem = { ...restored, synced: true };
+            setHistory((current) => {
+              const updated = current.map((it) =>
+                it.id === syncedItem.id ? syncedItem : it
+              );
+              historyRef.current = updated;
+              return updated;
+            });
+            void saveMarker({ ...localRecord, synced: true });
+            void refreshCloud(false);
+          })
+          .catch(() => {
+            setCloud((current) => ({ ...current, status: "error" }));
+          });
+      }
+    },
+    [refreshCloud]
+  );
 
   /* Перерисовка предпросмотра после загрузки шрифтов */
   useEffect(() => {
@@ -435,7 +631,6 @@ export function MarkerStudio() {
       });
       saveBlob(blob, markerFileName(name, id, "jpg"));
       rememberMarker({ name, id }, [...design.cells]);
-      pushCloud(name.trim());
       toast({
         title: "JPG для Vuforia сохранён",
         description: `«${name.trim()}» — 2048×2048 px, без названия. Готов к загрузке в Vuforia.`,
@@ -472,7 +667,6 @@ export function MarkerStudio() {
       pdf.setProperties({ title: `AR-marker ${id}` });
       saveBlob(pdf.output("blob"), markerFileName(name, id, "pdf"));
       rememberMarker({ name, id }, [...design.cells]);
-      pushCloud(name.trim());
       toast({
         title: "PDF для печати сохранён",
         description: `«${name.trim()}» — ${printSizeCm} см на листе A4, с названием.`,
@@ -577,8 +771,13 @@ export function MarkerStudio() {
     historyRef.current = next;
     setHistory(next);
     void deleteMarker(item.id).catch(() => undefined);
+    if (CLOUD_ON) {
+      void deleteCloudMarker(item.id)
+        .then(() => refreshCloud(false))
+        .catch(() => setCloud((current) => ({ ...current, status: "error" })));
+    }
     toast({
-      title: "Метка удалена из истории",
+      title: CLOUD_ON ? "Метка удалена из общей БД" : "Метка удалена из истории",
       description: `«${item.name}»`,
       duration: 5000,
       action: (
@@ -593,11 +792,24 @@ export function MarkerStudio() {
   };
 
   const clearHistory = (): void => {
-    if (history.length === 0) return;
+    if (history.length + cloudOnlyItems.length === 0) return;
     historyRef.current = [];
     setHistory([]);
     setConfirmClear(false);
     void clearMarkers().catch(() => undefined);
+    if (CLOUD_ON) {
+      void clearCloudMarkers()
+        .then(() => refreshCloud(false))
+        .catch(() => {
+          setCloud((current) => ({ ...current, status: "error" }));
+          toast({
+            title: "Не удалось очистить общую БД",
+            description: "Локальный кэш очищен, но серверные метки остались.",
+            variant: "destructive",
+            duration: 4000,
+          });
+        });
+    }
     toast({ title: "История очищена", duration: 3000 });
   };
 
@@ -629,7 +841,6 @@ export function MarkerStudio() {
       trimmedName
     )}&size=${printSizeCm}`;
     rememberMarker({ name: trimmedName, id }, [...design.cells]);
-    pushCloud(trimmedName);
     if (typeof navigator.share === "function") {
       try {
         await navigator.share({
@@ -907,7 +1118,7 @@ export function MarkerStudio() {
               <History className="size-4 shrink-0 text-stone-400 dark:text-stone-500" aria-hidden="true" />
               История меток
               <Badge variant="secondary" className="bg-stone-100 text-stone-600 tabular-nums dark:bg-stone-800 dark:text-stone-300">
-                {history.length}
+                {history.length + cloudOnlyItems.length}
               </Badge>
               {/* Статус синхронизации: локально / синхронизировано / ошибка */}
               <button
@@ -918,10 +1129,10 @@ export function MarkerStudio() {
                 aria-live="polite"
                 title={
                   cloud.status === "on"
-                    ? `${cloud.items.length} меток в облаке — обновить список`
+                    ? `${cloud.items.length} меток в общей БД — обновить список`
                     : cloud.status === "error"
-                      ? "Облако недоступно — попробовать снова"
-                      : "История хранится в браузерной БД (IndexedDB). Подключение Supabase (см. HOSTING.md) включит синхронизацию между устройствами"
+                      ? "Общая БД недоступна — попробовать снова"
+                      : "Общая БД не подключена. История хранится в этом браузере (IndexedDB). Инструкция — HOSTING.md"
                 }
                 className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:focus-visible:ring-stone-600/50"
               >
@@ -947,16 +1158,16 @@ export function MarkerStudio() {
                   }
                 >
                   {cloud.status === "on"
-                    ? "Синхронизировано"
+                    ? "Общая БД"
                     : cloud.status === "syncing"
                       ? "Синхронизация…"
                       : cloud.status === "error"
-                        ? "Облако недоступно"
+                        ? "БД недоступна"
                         : "Локально"}
                 </span>
               </button>
             </h2>
-            {history.length > 0 && (
+            {history.length + cloudOnlyItems.length > 0 && (
               <div className="ml-auto flex items-center gap-1">
                 <Button
                   variant="ghost"
@@ -982,11 +1193,12 @@ export function MarkerStudio() {
                   <AlertDialogContent className="rounded-[24px] border-stone-200/80 bg-white text-stone-900 shadow-soft dark:border-stone-800 dark:bg-stone-900 dark:text-stone-100">
                     <AlertDialogHeader>
                       <AlertDialogTitle className="text-stone-900 dark:text-stone-100">
-                        Очистить историю?
+                        {CLOUD_ON ? "Очистить общую БД?" : "Очистить историю?"}
                       </AlertDialogTitle>
                       <AlertDialogDescription className="text-stone-500 dark:text-stone-400">
-                        Все сохранённые метки ({history.length}) пропадут из списка.
-                        Скачанные JPG и PDF это не затронет.
+                        {CLOUD_ON
+                          ? `Все метки (${history.length + cloudOnlyItems.length}) удалятся из общей БД у всех пользователей. Скачанные JPG и PDF это не затронет.`
+                          : `Все сохранённые метки (${history.length}) пропадут из списка. Скачанные JPG и PDF это не затронет.`}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -1007,6 +1219,14 @@ export function MarkerStudio() {
           </div>
 
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
+            {/* Пока общая БД не подключена — честно предупреждаем */}
+            {!CLOUD_ON && (
+              <p className="rounded-2xl bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                Локальный режим: метки видны только в этом браузере. Для общей работы
+                подключите Supabase — инструкция в HOSTING.md.
+              </p>
+            )}
+
             {/* Поиск по названию: появляется, когда список реально длинный */}
             {history.length + cloudOnlyItems.length >= 6 && (
               <div className="relative">
@@ -1069,6 +1289,7 @@ export function MarkerStudio() {
                       cloud
                       onDownload={downloadItem}
                       onLoad={loadItem}
+                      onDelete={deleteItem}
                     />
                   </li>
                 ))}
@@ -1089,10 +1310,23 @@ export function MarkerStudio() {
               </span>
               <span aria-live="polite">Занято: {history.length + cloudOnlyItems.length}</span>
               <span
-                title="Где сейчас хранится история: IndexedDB — основная БД браузера, localStorage — запасное хранилище, память — крайний случай"
+                title={
+                  CLOUD_ON
+                    ? "Общая БД — Supabase. IndexedDB/localStorage работают как локальный кэш и офлайн-копия"
+                    : "Где сейчас хранится история: IndexedDB — основная БД браузера, localStorage — запасное хранилище, память — крайний случай"
+                }
                 className="text-stone-300 dark:text-stone-600"
               >
-                БД: {dbLoading ? "…" : storageLabel(dbMode)}
+                БД:{" "}
+                {dbLoading
+                  ? "…"
+                  : CLOUD_ON
+                    ? cloud.status === "on"
+                      ? "Supabase"
+                      : cloud.status === "syncing"
+                        ? "подключение…"
+                        : "кэш"
+                    : storageLabel(dbMode)}
               </span>
             </div>
           </CardContent>

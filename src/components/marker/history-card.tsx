@@ -18,6 +18,10 @@ export interface HistoryItem extends MarkerConfig {
   createdAt?: number;
   /** Узор, сохранённый в БД (если есть) */
   cells?: number[];
+  /** Запись пришла из общей БД */
+  fromCloud?: boolean;
+  /** Синхронизирована ли запись с общей БД */
+  synced?: boolean;
 }
 
 interface HistoryCardProps {
@@ -90,7 +94,7 @@ export function HistoryCard({ item, index = 0, cloud = false, onDownload, onLoad
             {cloud && (
               <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
                 <Cloud className="size-3" aria-hidden="true" />
-                Облако
+                Общая БД
               </span>
             )}
           </div>
@@ -109,7 +113,7 @@ export function HistoryCard({ item, index = 0, cloud = false, onDownload, onLoad
           <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">{formatDate(item.ts)}</div>
         </div>
       </div>
-      <div className={`mt-3.5 grid gap-1.5 ${cloud ? "grid-cols-2" : "grid-cols-3"}`}>
+      <div className="mt-3.5 grid grid-cols-3 gap-1.5">
         <Button
           variant="outline"
           size="sm"
@@ -130,7 +134,7 @@ export function HistoryCard({ item, index = 0, cloud = false, onDownload, onLoad
           <RotateCcw className="size-3.5" aria-hidden="true" />
           Открыть
         </Button>
-        {!cloud && onDelete && (
+        {onDelete && (
           <Button
             variant="outline"
             size="sm"

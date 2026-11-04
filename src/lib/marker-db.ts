@@ -22,6 +22,8 @@ export interface MarkerRecord {
   createdAt: number;
   /** Когда её последний раз скачивали/печатали */
   updatedAt: number;
+  /** Синхронизирована ли запись с общей БД (false — ждёт отправки) */
+  synced?: boolean;
 }
 
 export type StorageMode = "indexeddb" | "localstorage" | "memory";
@@ -133,7 +135,15 @@ function sanitize(value: unknown): MarkerRecord[] {
       typeof it.updatedAt === "number" && Number.isFinite(it.updatedAt)
         ? it.updatedAt
         : createdAt;
-    const record: MarkerRecord = { id: it.id, name, cells, createdAt, updatedAt };
+    const record: MarkerRecord = {
+      id: it.id,
+      name,
+      cells,
+      createdAt,
+      updatedAt,
+      /* Старые записи без флага считаем уже синхронизированными */
+      synced: it.synced !== false,
+    };
     const previous = byId.get(record.id);
     if (!previous || previous.updatedAt <= record.updatedAt) byId.set(record.id, record);
   }
