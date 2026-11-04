@@ -411,7 +411,11 @@ export function MarkerStudio() {
      Вызывается при скачивании, PDF и шеринге — то есть когда метка
      реально «выпущена», а не на каждый символ в поле названия. */
   const rememberMarker = useCallback(
-    (config: MarkerConfig, cells?: readonly number[]): void => {
+    (
+      config: MarkerConfig,
+      cells?: readonly number[],
+      knownCreatedAt?: number
+    ): void => {
       const cleanName = config.name.trim().replace(/\s+/g, " ");
       if (!cleanName || !config.id) return;
 
@@ -423,7 +427,7 @@ export function MarkerStudio() {
 
       const prev = historyRef.current;
       const existing = prev.find((it) => it.id === config.id);
-      const createdAt = existing?.createdAt ?? Date.now();
+      const createdAt = knownCreatedAt ?? existing?.createdAt ?? Date.now();
       /* ts всегда растёт — без дублей ключей при быстрых нажатиях */
       const ts = Math.max(Date.now(), (prev[0]?.ts ?? 0) + 1);
       const synced = !CLOUD_ON;
@@ -754,7 +758,11 @@ export function MarkerStudio() {
         dpr: 1,
       });
       saveBlob(blob, markerFileName(item.name, item.id, "jpg"));
-      rememberMarker({ name: item.name, id: item.id }, [...itemDesign.cells]);
+      rememberMarker(
+        { name: item.name, id: item.id },
+        [...itemDesign.cells],
+        item.createdAt
+      );
       toast({
         title: "JPG сохранён",
         description: `«${item.name}» — без названия, для Vuforia.`,
