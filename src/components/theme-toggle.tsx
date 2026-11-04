@@ -30,10 +30,10 @@ export function ThemeToggle() {
       onClick={toggle}
       aria-label="Переключить светлую и тёмную тему"
       title="Светлая / тёмная тема"
-      className="grid size-10 shrink-0 place-items-center rounded-full text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-200 dark:focus-visible:ring-stone-600/50"
+      className="grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-card text-ink-soft transition-colors hover:bg-paper hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/30"
     >
-      <Sun className="size-5 dark:hidden" aria-hidden="true" />
-      <Moon className="hidden size-5 dark:block" aria-hidden="true" />
+      <Sun className="size-[18px] dark:hidden" aria-hidden="true" />
+      <Moon className="hidden size-[18px] dark:block" aria-hidden="true" />
     </button>
   );
 }

@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Генератор AR-меток — трекер-метки для 3D-машинок",
   description:
-    "Генератор трекер-меток: название над узором, жирная рамка и крупная матрица 5×5 — уникальный узор выводится из названия и различается камерой даже при слабом освещении.",
+    "Генератор AR-меток для Vuforia и печати: JPG без подписи, PDF с названием, уникальный узор из названия и общая история меток.",
   keywords: ["AR-метка", "трекер", "3D-модель", "генератор меток", "marker", "tracking"],
   manifest: assetPath("/manifest.webmanifest"),
   applicationName: "Генератор AR-меток",
@@ -43,7 +43,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Генератор AR-меток — трекер-метки для 3D-машинок",
     description:
-      "Трекер-метки со названием над узором и уникальной матрицей из названия. Максимум контраста для распознавания при слабом освещении.",
+      "Метки для Vuforia и печати: JPG без подписи, PDF с названием, уникальный узор из названия.",
     siteName: "Генератор AR-меток",
     type: "website",
   },
@@ -52,8 +52,8 @@ export const metadata: Metadata = {
 /** PWA: theme-color подстраивается под активную тему (светлая/тёмная) */
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#FBFAF7" },
-    { media: "(prefers-color-scheme: dark)", color: "#1C1917" },
+    { media: "(prefers-color-scheme: light)", color: "#F3EFE6" },
+    { media: "(prefers-color-scheme: dark)", color: "#12110F" },
   ],
 };
 

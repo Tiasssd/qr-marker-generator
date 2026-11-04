@@ -10,35 +10,36 @@ import { ScanLine } from "lucide-react";
 export default function Home() {
   return (
     <div className="relative flex min-h-screen flex-col bg-background text-foreground">
-      {/* Шапка */}
-      <header className="sticky top-0 z-40 border-b border-stone-200/70 bg-background/85 backdrop-blur-md dark:border-stone-800/70">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3.5 px-4 sm:px-6">
-          <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-stone-900 shadow-soft-sm dark:bg-stone-100">
-            <ScanLine className="size-5 text-white dark:text-stone-900" strokeWidth={2.2} aria-hidden="true" />
+      <header className="sticky top-0 z-40 border-b border-line/80 bg-background">
+        <div className="mx-auto flex h-[72px] max-w-[1240px] items-center gap-3 px-5 sm:px-8">
+          <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-ink text-paper shadow-sm">
+            <ScanLine className="size-5" strokeWidth={1.8} aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-[15px] font-semibold tracking-tight text-stone-900 dark:text-stone-100">
+            <h1 className="truncate text-[15px] font-semibold tracking-tight text-ink">
               Генератор AR-меток
             </h1>
-            <div className="mt-0.5 truncate text-xs text-stone-500 dark:text-stone-400">
-              Трекер-метки для спавна 3D-машинок
-            </div>
+            <p className="mt-0.5 truncate text-[11px] text-ink-muted">
+              Трекер-метки для 3D-машинок
+            </p>
           </div>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <span className="hidden items-center rounded-lg border border-line bg-card px-2.5 py-1.5 font-mono text-[10px] text-ink-muted sm:inline-flex">
+              Vuforia · A4
+            </span>
             <ThemeToggle />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 lg:py-12">
+      <main className="mx-auto w-full max-w-[1240px] flex-1 px-5 py-7 sm:px-8 lg:py-10">
         <MarkerStudioLoader />
       </main>
 
-      {/* Подвал */}
-      <footer className="mt-auto border-t border-stone-200/70 dark:border-stone-800/70">
-        <div className="mx-auto flex max-w-6xl flex-col gap-1.5 px-4 py-6 text-xs text-stone-500 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6 dark:text-stone-400">
-          <span>Метки генерируются локально, история — в браузерной БД.</span>
-          <span className="shrink-0">JPG без названия — для Vuforia, PDF — для печати</span>
+      <footer className="mt-auto border-t border-line/80">
+        <div className="mx-auto flex max-w-[1240px] flex-col gap-1.5 px-5 py-6 text-[11px] text-ink-muted sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-8">
+          <span>Метки генерируются в браузере.</span>
+          <span className="shrink-0">JPG для Vuforia · PDF для печати</span>
         </div>
       </footer>
     </div>

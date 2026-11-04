@@ -6,6 +6,16 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-muted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-signal: var(--signal);
+  --color-signal-strong: var(--signal-strong);
+  --color-mat: var(--mat);
+  --color-selected: var(--selected);
+  --color-selected-ink: var(--selected-ink);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -44,85 +54,103 @@
 }
 
 /*
-  Палитра «мягкого светлого минимализма»:
-  тёплый почти-белый фон, чернильный текст, один акцент — терракота.
-  Всё остальное — оттенки камня (stone).
+  «Печатная мастерская»: тёплая бумага, чернильный текст,
+  тёмный стол для предпросмотра и один сигнальный акцент — терракота.
+  Цвет живёт в предпросмотре и ID, интерфейс остаётся тихим.
 */
 :root {
   color-scheme: light;
-  --radius: 1rem;
-  --background: oklch(0.984 0.003 85);
-  --foreground: oklch(0.216 0.008 80);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.216 0.008 80);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.216 0.008 80);
-  --primary: oklch(0.244 0.01 80);
-  --primary-foreground: oklch(0.985 0.003 85);
-  --secondary: oklch(0.955 0.004 85);
-  --secondary-foreground: oklch(0.244 0.01 80);
-  --muted: oklch(0.955 0.004 85);
-  --muted-foreground: oklch(0.5 0.012 80);
-  --accent: oklch(0.94 0.005 85);
-  --accent-foreground: oklch(0.244 0.01 80);
-  --destructive: oklch(0.577 0.222 27.2);
-  --destructive-foreground: oklch(0.985 0.003 85);
-  --border: oklch(0.912 0.004 85);
-  --input: oklch(0.912 0.004 85);
-  --ring: oklch(0.66 0.16 45);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0.003 85);
-  --sidebar-foreground: oklch(0.216 0.008 80);
-  --sidebar-primary: oklch(0.244 0.01 80);
-  --sidebar-primary-foreground: oklch(0.985 0.003 85);
-  --sidebar-accent: oklch(0.94 0.005 85);
-  --sidebar-accent-foreground: oklch(0.244 0.01 80);
-  --sidebar-border: oklch(0.912 0.004 85);
-  --sidebar-ring: oklch(0.66 0.16 45);
+  --radius: 0.75rem;
+  --paper: #f3efe6;
+  --card: #fffdf8;
+  --ink: #1b1916;
+  --ink-soft: #5f584e;
+  --ink-muted: #6f675a;
+  --line: #ddd5c6;
+  --signal: #b8471f;
+  --signal-strong: #983512;
+  --mat: #1a1815;
+  --selected: var(--card);
+  --selected-ink: #1b1916;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card-foreground: var(--ink);
+  --popover: var(--card);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+  --secondary: #ece6da;
+  --secondary-foreground: var(--ink);
+  --muted: #ece6da;
+  --muted-foreground: var(--ink-soft);
+  --accent: #ece6da;
+  --accent-foreground: var(--ink);
+  --destructive: #b42318;
+  --destructive-foreground: #fffdf8;
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--signal);
+
+  --chart-1: #b8471f;
+  --chart-2: #6b645a;
+  --chart-3: #948b7d;
+  --chart-4: #d9c7a7;
+  --chart-5: #1b1916;
+
+  --sidebar: var(--paper);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--ink);
+  --sidebar-primary-foreground: var(--paper);
+  --sidebar-accent: var(--secondary);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--signal);
 }
 
-/* Тёмная тема: та же тёплая гамма камня, инвертированная.
-   Фон — глубокий тёплый графит, карточки на ступень светлее,
-   «чернильные» кнопки инвертируются в светлые пилюли.
-   Бумага метки (canvas) остаётся белой — узору нужен контраст. */
+/* Тёмная тема — тот же стол, погашенный свет.
+   Бумага метки (canvas) остаётся белой: узору нужен контраст. */
 .dark {
   color-scheme: dark;
-  --background: oklch(0.178 0.004 85);
-  --foreground: oklch(0.928 0.004 85);
-  --card: oklch(0.223 0.005 85);
-  --card-foreground: oklch(0.928 0.004 85);
-  --popover: oklch(0.24 0.005 85);
-  --popover-foreground: oklch(0.928 0.004 85);
-  --primary: oklch(0.928 0.004 85);
-  --primary-foreground: oklch(0.216 0.008 80);
-  --secondary: oklch(0.28 0.005 85);
-  --secondary-foreground: oklch(0.928 0.004 85);
-  --muted: oklch(0.28 0.005 85);
-  --muted-foreground: oklch(0.68 0.008 80);
-  --accent: oklch(0.3 0.005 85);
-  --accent-foreground: oklch(0.928 0.004 85);
-  --destructive: oklch(0.62 0.2 25);
-  --destructive-foreground: oklch(0.985 0.003 85);
-  --border: oklch(0.32 0.005 85);
-  --input: oklch(0.32 0.005 85);
-  --ring: oklch(0.72 0.15 50);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.223 0.005 85);
-  --sidebar-foreground: oklch(0.928 0.004 85);
-  --sidebar-primary: oklch(0.928 0.004 85);
-  --sidebar-primary-foreground: oklch(0.216 0.008 80);
-  --sidebar-accent: oklch(0.3 0.005 85);
-  --sidebar-accent-foreground: oklch(0.928 0.004 85);
-  --sidebar-border: oklch(0.32 0.005 85);
-  --sidebar-ring: oklch(0.72 0.15 50);
+  --paper: #12110f;
+  --card: #1c1a17;
+  --ink: #f2ede3;
+  --ink-soft: #c2b9ab;
+  --ink-muted: #9a9184;
+  --line: #322e28;
+  --signal: #f07a4a;
+  --signal-strong: #ff956b;
+  --mat: #0d0c0a;
+  --selected: #f3efe6;
+  --selected-ink: #1b1916;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card-foreground: var(--ink);
+  --popover: var(--card);
+  --popover-foreground: var(--ink);
+  --primary: var(--paper);
+  --primary-foreground: var(--ink);
+  --secondary: #26231f;
+  --secondary-foreground: var(--ink);
+  --muted: #26231f;
+  --muted-foreground: var(--ink-soft);
+  --accent: #26231f;
+  --accent-foreground: var(--ink);
+  --destructive: #d92d20;
+  --destructive-foreground: #fffdf8;
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--signal);
+
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--paper);
+  --sidebar-primary-foreground: var(--ink);
+  --sidebar-accent: var(--secondary);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--signal);
 }
 
 @layer base {
@@ -132,14 +160,14 @@
   body {
     @apply bg-background text-foreground;
   }
-  /* Выделение текста в тон акценту приложения */
+  /* Выделение текста в тон сигнальному акценту */
   ::selection {
-    background: oklch(0.72 0.15 50 / 0.28);
-    color: oklch(0.216 0.008 80);
+    background: color-mix(in oklab, var(--signal) 24%, transparent);
+    color: var(--ink);
   }
   .dark ::selection {
-    background: oklch(0.72 0.15 50 / 0.4);
-    color: oklch(0.97 0.003 85);
+    background: color-mix(in oklab, var(--signal) 32%, transparent);
+    color: var(--ink);
   }
 }
 
@@ -150,38 +178,58 @@ html {
 
 /* ---------- Оформление студии AR-меток ---------- */
 
-/* Мягкие рассеянные тени вместо свечений и blur-панелей.
-   В тёмной теме глубина чуть мягче — на тёмном фоне тени
-   «залипают» сильнее, компенсируем прозрачностью. */
+/* Мягкие нейтральные тени. На тёмном фоне глубина — за счёт
+   ступеней поверхности и хайрлайнов, а не тяжёлых теней. */
 .shadow-soft {
   box-shadow:
-    0 1px 2px rgba(41, 37, 33, 0.05),
-    0 16px 40px -12px rgba(41, 37, 33, 0.12);
+    0 1px 2px rgba(27, 25, 22, 0.04),
+    0 18px 40px -20px rgba(27, 25, 22, 0.18);
 }
 .dark .shadow-soft {
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.3),
-    0 16px 40px -12px rgba(0, 0, 0, 0.45);
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 18px 40px -20px rgba(0, 0, 0, 0.55);
 }
 .shadow-soft-sm {
   box-shadow:
-    0 1px 2px rgba(41, 37, 33, 0.06),
-    0 6px 16px -6px rgba(41, 37, 33, 0.1);
+    0 1px 2px rgba(27, 25, 22, 0.05),
+    0 8px 20px -12px rgba(27, 25, 22, 0.16);
 }
 .dark .shadow-soft-sm {
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.3),
-    0 6px 16px -6px rgba(0, 0, 0, 0.4);
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 8px 20px -12px rgba(0, 0, 0, 0.5);
 }
 .shadow-soft-lg {
   box-shadow:
-    0 2px 4px rgba(41, 37, 33, 0.06),
-    0 28px 64px -16px rgba(41, 37, 33, 0.18);
+    0 2px 4px rgba(27, 25, 22, 0.05),
+    0 28px 64px -24px rgba(27, 25, 22, 0.22);
 }
 .dark .shadow-soft-lg {
   box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.35),
-    0 28px 64px -16px rgba(0, 0, 0, 0.55);
+    0 28px 64px -24px rgba(0, 0, 0, 0.65);
+}
+
+/* Стол для предпросмотра: тёмная поверхность с еле заметной сеткой.
+   Это не декор — это «материал» рабочего места, на котором лежит оттиск. */
+.preview-mat {
+  background-color: var(--mat);
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgba(255, 255, 255, 0.075) 1px,
+    transparent 0
+  );
+  background-size: 20px 20px;
+}
+
+/* Линейка под листом метки */
+.ruler-ticks {
+  background-image: repeating-linear-gradient(
+    90deg,
+    currentColor 0 1px,
+    transparent 1px 10px
+  );
 }
 
 /* Появление карточек: мягкий подъём с проявлением */
@@ -229,17 +277,17 @@ html {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(41, 37, 33, 0.18);
+  background: rgba(27, 25, 22, 0.18);
   border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(41, 37, 33, 0.3);
+  background: rgba(27, 25, 22, 0.3);
 }
 .dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 253, 248, 0.16);
+  background: rgba(242, 237, 227, 0.16);
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 253, 248, 0.28);
+  background: rgba(242, 237, 227, 0.28);
 }
 
 /* Печать: лист метки на белом фоне */

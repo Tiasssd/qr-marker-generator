@@ -26,15 +26,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ToastAction } from "@/components/ui/toast";
@@ -49,7 +41,6 @@ import {
   exportMarkerJpeg,
   MARKER_SIDE_RATIO,
   markerFileName,
-  PATTERN_CAPACITY,
   renderMarkerJpegDataUrl,
   type MarkerConfig,
 } from "@/lib/marker";
@@ -61,7 +52,23 @@ import {
   type MarkerRecord,
   type StorageMode,
 } from "@/lib/marker-db";
-import { Copy, Download, FileDown, History, Maximize2, Search, SearchX, Shapes, Share2, Trash2, TriangleAlert, Type, X, Cloud, CloudOff } from "lucide-react";
+import {
+  Check,
+  CloudOff,
+  Copy,
+  Download,
+  FileDown,
+  History,
+  Maximize2,
+  RefreshCw,
+  Search,
+  SearchX,
+  Shapes,
+  Share2,
+  Trash2,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import {
   clearCloudMarkers,
   cloudEnabled,
@@ -149,6 +156,16 @@ function storageLabel(mode: StorageMode): string {
   return "в памяти";
 }
 
+function pluralMarkers(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${count} метка`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return `${count} метки`;
+  }
+  return `${count} меток`;
+}
+
 /* Декодирование data-URL в Image — для пропорций при раскладке на листе A4 */
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -157,6 +174,29 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error("Не удалось декодировать картинку метки"));
     img.src = url;
   });
+}
+
+/** Фоновый пример метки для пустого предпросмотра */
+function SampleMarkerCanvas() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const sampleId = deriveId("Пример метки");
+    const sample = sampleId ? createMarkerDesign(sampleId) : null;
+    if (!sample || !ref.current) return;
+    drawMarker(ref.current, sample, {
+      name: "",
+      id: sampleId,
+      size: 660,
+      dpr: 2,
+    });
+  }, []);
+  return (
+    <canvas
+      ref={ref}
+      className="block h-auto w-full opacity-40"
+      aria-hidden="true"
+    />
+  );
 }
 
 export function MarkerStudio() {
@@ -170,6 +210,7 @@ export function MarkerStudio() {
   const [historyQuery, setHistoryQuery] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [pdfAllBusy, setPdfAllBusy] = useState(false);
+  const [showSticky, setShowSticky] = useState(false);
   const [fontsReady, setFontsReady] = useState(false);
   const [cloud, setCloud] = useState<CloudState>(() => ({
     status: CLOUD_ON ? "syncing" : "off",
@@ -177,6 +218,7 @@ export function MarkerStudio() {
   }));
 
   const previewRef = useRef<HTMLCanvasElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const zoomRef = useRef<HTMLCanvasElement>(null);
   const historyRef = useRef<HistoryItem[]>([]);
@@ -188,15 +230,8 @@ export function MarkerStudio() {
   const id = useMemo(() => deriveId(name), [name]);
   const design = useMemo(() => (id ? createMarkerDesign(id) : null), [id]);
 
-  /* Живой поиск по истории: считаем один раз на каждое изменение фильтра */
-  const filteredHistory = useMemo(() => {
-    const q = historyQuery.trim().toLowerCase();
-    if (!q) return history;
-    return history.filter((it) => it.name.toLowerCase().includes(q));
-  }, [history, historyQuery]);
-
   /* Облачные метки, которых нет в локальной истории: узор восстановится
-     из названия — храним только его. Показываем с бейджем «Облако». */
+     из названия — храним только его. Показываем с бейджем «Общая БД». */
   const cloudOnlyItems = useMemo<HistoryItem[]>(() => {
     if (cloud.status !== "on") return [];
     const localNames = new Set(history.map((it) => normalizeName(it.name)));
@@ -205,12 +240,21 @@ export function MarkerStudio() {
       .map(fromCloudItem);
   }, [cloud, history]);
 
-  /* Поиск распространяется и на облачные метки */
-  const filteredCloud = useMemo(() => {
+  const total = history.length + cloudOnlyItems.length;
+
+  /* Один список для поиска и отображения: локальные + общие */
+  const visibleHistory = useMemo<HistoryItem[]>(() => {
     const q = historyQuery.trim().toLowerCase();
-    if (!q) return cloudOnlyItems;
-    return cloudOnlyItems.filter((it) => it.name.toLowerCase().includes(q));
-  }, [cloudOnlyItems, historyQuery]);
+    const local = q
+      ? history.filter((it) => it.name.toLowerCase().includes(q))
+      : history;
+    const cloudItems = q
+      ? cloudOnlyItems.filter((it) => it.name.toLowerCase().includes(q))
+      : cloudOnlyItems;
+    return [...local, ...cloudItems].sort(
+      (a, b) => (b.createdAt ?? b.ts) - (a.createdAt ?? a.ts)
+    );
+  }, [history, cloudOnlyItems, historyQuery]);
 
   /* Защита от коллизий узоров: ёмкость алфавита конечна (10,6 млн),
      и два разных названия МОГУТ дать один узор — камера будет путать их.
@@ -568,16 +612,28 @@ export function MarkerStudio() {
     return () => window.clearTimeout(timer);
   }, [name]);
 
-  /* Липкая мобильная панель резервирует место внизу страницы (body padding),
-     чтобы подвал не оказывался под ней; на десктопе и печати — без резерва */
+  /* Липкая панель появляется только когда основные действия ушли из вида */
   useEffect(() => {
-    if (!design) return;
+    const el = actionsRef.current;
+    if (!el || !design) {
+      setShowSticky(false);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setShowSticky(!entry.isIntersecting),
+      { rootMargin: "-80px 0px 0px 0px", threshold: 0 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [design]);
+
+  /* Резерв места под липкую панель — только на мобильном и только когда она видна */
+  useEffect(() => {
     const mq = window.matchMedia("(max-width: 1023px)");
     const apply = (): void => {
       const bar = document.querySelector<HTMLElement>(".marker-sticky-bar");
-      /* плавающая капсула с отступом снизу — берём высоту + зазор */
       document.body.style.paddingBottom =
-        mq.matches && bar ? `${bar.offsetHeight + 20}px` : "";
+        mq.matches && showSticky && bar ? `${bar.offsetHeight + 20}px` : "";
     };
     apply();
     mq.addEventListener("change", apply);
@@ -585,7 +641,7 @@ export function MarkerStudio() {
       mq.removeEventListener("change", apply);
       document.body.style.paddingBottom = "";
     };
-  }, [design]);
+  }, [showSticky]);
 
   /* Крупный вид в модалке. Портал диалога монтируется ПОЗЖЕ срабатывания
      эффекта с zoomOpen, поэтому рисуем прямо в ref-callback: он вызывается
@@ -697,6 +753,7 @@ export function MarkerStudio() {
         const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
         /* 16 см — сторона самой метки; карточка чуть шире из-за полей */
         const w = (16 * 10) / MARKER_SIDE_RATIO;
+        all.sort((a, b) => (b.createdAt ?? b.ts) - (a.createdAt ?? a.ts));
         let placed = 0;
         for (const it of all) {
           const itemDesign =
@@ -869,122 +926,150 @@ export function MarkerStudio() {
   };
 
   const downloadDisabled = !name.trim();
+  const cloudError = CLOUD_ON && cloud.status === "error";
+  const cloudLabel = !CLOUD_ON
+    ? "Локально"
+    : cloud.status === "on"
+      ? "Общая БД"
+      : cloud.status === "syncing"
+        ? "Синхронизация"
+        : "Только кэш";
+  const cloudDot = !CLOUD_ON
+    ? "bg-ink-muted"
+    : cloud.status === "on"
+      ? "bg-emerald-500"
+      : cloud.status === "syncing"
+        ? "bg-amber-500"
+        : "bg-red-500";
+  const dbLabel = dbLoading
+    ? "…"
+    : CLOUD_ON
+      ? cloud.status === "on"
+        ? "Supabase"
+        : "кэш"
+      : storageLabel(dbMode);
 
   return (
     <>
-      <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(340px,420px)_1fr] lg:items-start">
-        {/* Панель метки (тянется на высоту своей строки — без щелей под карточкой) */}
-        <Card className="anim-rise rounded-[28px] border-stone-200/80 bg-white shadow-soft lg:col-start-1 lg:row-start-1 lg:h-full dark:border-stone-800 dark:bg-stone-900">
-          <CardContent className="space-y-6">
-            {/* Название — единственный ввод: задаёт и подпись, и уникальный узор */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="marker-name" className="text-sm font-medium text-stone-700 dark:text-stone-300">
-                  Название метки
-                </Label>
-                {/* Счётчик виден только у самого лимита — не захламляет обычный ввод */}
-                {name.length >= 45 && (
-                  <span
-                    aria-live="polite"
-                    className={`font-mono text-xs tabular-nums ${
-                      name.length >= 58 ? "text-orange-600" : "text-stone-400"
-                    }`}
-                  >
-                    {name.length} / 60
-                  </span>
-                )}
-              </div>
-              <div className="relative">
-                <Input
-                  id="marker-name"
-                  ref={nameInputRef}
-                  value={name}
-                  maxLength={60}
-                  onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void handleDownload();
-                  }}
-                  placeholder="Например: Красная спортивная"
-                  className="h-14 rounded-2xl border-stone-200 bg-stone-50/80 pr-12 text-[15px] text-stone-900 caret-orange-600 placeholder:text-stone-400 focus-visible:border-stone-300 focus-visible:ring-stone-400/25 dark:border-stone-700 dark:bg-stone-800/60 dark:text-stone-100 dark:placeholder:text-stone-500 dark:focus-visible:border-stone-600 dark:focus-visible:ring-stone-500/30"
-                />
-                {name.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setName("");
-                      nameInputRef.current?.focus();
-                    }}
-                    aria-label="Очистить название"
-                    className="absolute inset-y-0 right-3 my-auto grid size-7 place-items-center rounded-full text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:text-stone-500 dark:hover:bg-stone-800 dark:hover:text-stone-300 dark:focus-visible:ring-stone-600/50"
-                  >
-                    <X className="size-4" aria-hidden="true" />
-                  </button>
-                )}
-              </div>
-              <p className="text-xs text-stone-500 dark:text-stone-400">
-                Название печатается над меткой и задаёт её уникальный узор
-              </p>
-              {/* Коллизия узоров: разные названия дали один узор — камера
-                  будет путать метки, предлагаем сменить название */}
-              {collisionWith && (
-                <p
-                  role="alert"
-                  className="flex items-start gap-1.5 rounded-2xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-                >
-                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  Узор совпал с меткой «{collisionWith}» — камера будет путать их. Выберите другое название.
+      <div className="anim-rise grid gap-6 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)] lg:items-start">
+        {/* 01 — создание метки */}
+        <Card className="gap-0 rounded-[20px] border-line bg-card py-0 shadow-none lg:h-full">
+          <CardContent className="flex h-full flex-col p-5 sm:p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-mono text-[10px] tracking-wide text-ink-muted">
+                  01 / новая метка
                 </p>
-              )}
+                <h2 className="mt-1 text-[17px] font-semibold tracking-tight text-ink">
+                  Название
+                </h2>
+              </div>
+              <span className="font-mono text-[11px] tabular-nums text-ink-muted">
+                {name.length}/60
+              </span>
             </div>
 
-            {/* Действия */}
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button
+            <div className="relative mt-4">
+              <Input
+                id="marker-name"
+                ref={nameInputRef}
+                value={name}
+                maxLength={60}
+                aria-label="Название метки"
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleDownload();
+                }}
+                placeholder="Например: Красная спортивная"
+                className="h-12 rounded-xl border-line bg-paper pr-11 text-[15px] text-ink caret-signal placeholder:text-ink-muted focus-visible:border-ink/30 focus-visible:ring-signal/20"
+              />
+              {name.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setName("");
+                    nameInputRef.current?.focus();
+                  }}
+                  aria-label="Очистить название"
+                  className="absolute inset-y-0 right-2.5 my-auto grid size-7 place-items-center rounded-md text-ink-muted transition-colors hover:bg-card hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/30"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-ink-soft">
+              Одно название — один узор. Перепечатка не меняет метку.
+            </p>
+
+            {collisionWith && (
+              <p
+                role="alert"
+                className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+              >
+                <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                Узор совпал с «{collisionWith}». Камера будет путать метки — выберите
+                другое название.
+              </p>
+            )}
+
+            <div ref={actionsRef} className="mt-5 grid grid-cols-2 gap-2.5">
+              <button
                 type="button"
                 onClick={handleDownload}
                 disabled={downloadDisabled}
-                className="h-12 flex-1 rounded-full bg-stone-900 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white dark:hover:shadow-soft"
+                title="Скачать JPG без названия — для Vuforia"
+                className="col-span-2 flex items-center gap-3 rounded-xl bg-ink p-3.5 text-left text-paper transition-colors hover:bg-ink/90 disabled:pointer-events-none disabled:opacity-40"
               >
-                <Download className="size-5" aria-hidden="true" />
-                Скачать JPG
-              </Button>
-              <Button
+                <Download className="size-4 shrink-0" aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-semibold">Скачать JPG</span>
+                  <span className="mt-0.5 block text-[11px] text-paper/60">
+                    Для Vuforia · без названия
+                  </span>
+                </span>
+              </button>
+
+              <button
                 type="button"
-                variant="outline"
                 onClick={() => void handlePdf()}
                 disabled={downloadDisabled}
-                title="Скачать PDF для печати: лист A4, метка с названием"
-                className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+                title="Скачать PDF для печати: метка с названием, A4"
+                className="flex flex-col items-start gap-2 rounded-xl border border-line bg-card p-3.5 text-left transition-colors hover:bg-paper disabled:pointer-events-none disabled:opacity-40"
               >
-                <FileDown className="size-5" aria-hidden="true" />
-                PDF
-              </Button>
-              <Button
+                <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
+                  <FileDown className="size-4 text-ink-soft" aria-hidden="true" />
+                  PDF
+                </span>
+                <span className="text-[11px] text-ink-muted">Печать · A4</span>
+              </button>
+
+              <button
                 type="button"
-                variant="outline"
                 onClick={() => void handleShare()}
                 disabled={downloadDisabled}
-                title="Скопировать ссылку: метка откроется готовой"
-                className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+                title="Скопировать ссылку на метку"
+                className="flex flex-col items-start gap-2 rounded-xl border border-line bg-card p-3.5 text-left transition-colors hover:bg-paper disabled:pointer-events-none disabled:opacity-40"
               >
-                <Share2 className="size-5" aria-hidden="true" />
-                Поделиться
-              </Button>
+                <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
+                  <Share2 className="size-4 text-ink-soft" aria-hidden="true" />
+                  Поделиться
+                </span>
+                <span className="text-[11px] text-ink-muted">Ссылка на метку</span>
+              </button>
             </div>
 
-            {/* Назначение форматов — чтобы никто не перепутал */}
-            <p className="rounded-2xl bg-stone-50 px-3 py-2 text-[11px] leading-relaxed text-stone-500 dark:bg-stone-800/50 dark:text-stone-400">
-              <span className="font-medium text-stone-700 dark:text-stone-300">JPG</span> — без названия,
-              2048×2048, для загрузки в Vuforia.{" "}
-              <span className="font-medium text-stone-700 dark:text-stone-300">PDF</span> — с названием,
-              для печати на A4.
-            </p>
-
-            {/* Размер печати */}
-            <div className="space-y-2">
-              <Label htmlFor="marker-print-size" className="text-sm font-medium text-stone-700 dark:text-stone-300">
-                Размер при печати
-              </Label>
+            <div className="mt-6">
+              <div className="flex items-baseline justify-between gap-3">
+                <Label
+                  htmlFor="marker-print-size"
+                  className="text-[13px] font-medium text-ink"
+                >
+                  Размер метки
+                </Label>
+                <span className="font-mono text-[11px] tabular-nums text-ink-muted">
+                  {printSizeCm} см
+                </span>
+              </div>
               <ToggleGroup
                 id="marker-print-size"
                 type="single"
@@ -993,308 +1078,346 @@ export function MarkerStudio() {
                   if (v) setPrintSizeCm(Number(v));
                 }}
                 aria-label="Размер при печати"
-                className="h-12 w-full gap-1 rounded-full border border-stone-200/80 bg-stone-100/70 p-1 shadow-none dark:border-stone-700/80 dark:bg-stone-800/70"
+                className="mt-2 h-11 w-full gap-1 rounded-xl border border-line bg-paper p-1 shadow-none"
               >
                 {[10, 13, 16].map((cm) => (
                   <ToggleGroupItem
                     key={cm}
                     value={String(cm)}
                     aria-label={`${cm} сантиметров`}
-                    className="h-10 min-w-0 flex-1 select-none rounded-full border-0 bg-transparent px-3 text-sm font-medium text-stone-500 shadow-none hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:font-semibold data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white dark:text-stone-400 dark:hover:text-stone-200 dark:data-[state=on]:bg-stone-200 dark:data-[state=on]:text-stone-900 dark:data-[state=on]:hover:bg-stone-200"
+                    className="h-9 min-w-0 flex-1 select-none rounded-lg border-0 bg-transparent px-2 text-[13px] font-medium text-ink-muted shadow-none hover:bg-transparent hover:text-ink data-[state=on]:bg-selected data-[state=on]:font-semibold data-[state=on]:text-selected-ink data-[state=on]:shadow-sm data-[state=on]:hover:bg-selected dark:data-[state=on]:bg-selected dark:data-[state=on]:text-selected-ink"
                   >
                     {cm} см
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
-              <p className="text-[11px] leading-relaxed text-stone-400 dark:text-stone-500">
-                Размер — сторона самой метки. «PDF всех» всегда печатает по 16 см, по одной
-                метке на лист.
+              <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
+                Сторона квадрата. «PDF всех» — 16 см, по одной метке на лист.
               </p>
+            </div>
+
+            <div className="mt-auto hidden border-t border-line pt-4 lg:block lg:pt-5">
+              <p className="font-mono text-[10px] tracking-wide text-ink-muted">
+                Перед печатью
+              </p>
+              <ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-ink-soft">
+                <li className="flex gap-2">
+                  <span className="mt-[7px] size-1 shrink-0 rounded-full bg-signal" aria-hidden="true" />
+                  Белая бумага, масштаб 100%
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-[7px] size-1 shrink-0 rounded-full bg-signal" aria-hidden="true" />
+                  JPG — для Vuforia, без подписи
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-[7px] size-1 shrink-0 rounded-full bg-signal" aria-hidden="true" />
+                  PDF — для печати, с названием
+                </li>
+              </ul>
             </div>
           </CardContent>
         </Card>
 
-        {/* Предпросмотр: правая колонка на обе строки; при готовой метке
-            прилипает при прокрутке истории, в пустом — тянется и центрирует онбординг */}
-        <div
-          className={`anim-rise anim-rise-delay-1 lg:col-start-2 lg:row-span-2 lg:row-start-1 ${
-            design ? "lg:sticky lg:top-24" : "lg:self-stretch"
-          }`}
-        >
-          <Card
-            className={`rounded-[28px] border-stone-200/80 bg-white shadow-soft${
-              design ? "" : " lg:h-full"
-            } dark:border-stone-800 dark:bg-stone-900`}
-          >
-            <CardHeader>
-              <CardTitle className="text-[17px] font-semibold tracking-tight text-stone-900 dark:text-stone-100">Предпросмотр</CardTitle>
-              <CardAction>
-                {id ? (
-                  <button
-                    type="button"
-                    onClick={() => void copyId(id)}
-                    title="Скопировать ID"
-                    aria-label={`Скопировать ID ${id}`}
-                    className="-mx-1 inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-mono text-xs tracking-wider text-orange-700 transition-colors hover:bg-orange-50 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/60 dark:text-orange-400 dark:hover:bg-orange-950/50 dark:hover:text-orange-300 dark:focus-visible:ring-orange-500/40"
-                  >
-                    {id}
-                    <Copy className="size-3.5 opacity-60" aria-hidden="true" />
-                  </button>
-                ) : (
-                  <span className="font-mono text-xs tracking-wider text-stone-400 dark:text-stone-500">—</span>
-                )}
-              </CardAction>
-            </CardHeader>
-            <CardContent className={design ? "" : "flex flex-1 flex-col"}>
-              {design ? (
-                <div className="mx-auto max-w-[480px] rounded-[24px] bg-stone-100/80 p-5 dark:bg-stone-800/60">
-                  <button
-                    type="button"
-                    onClick={() => setZoomOpen(true)}
-                    title="Открыть метку крупно"
-                    aria-label="Открыть метку крупно"
-                    className="anim-paper group/zoom relative mx-auto block w-full cursor-zoom-in overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90 transition-shadow duration-300 hover:shadow-soft-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 dark:ring-stone-700/90 dark:focus-visible:ring-orange-400"
-                  >
+        {/* 02 — предпросмотр на тёмном столе */}
+        <Card className="preview-mat gap-0 overflow-hidden rounded-[20px] border border-white/5 bg-mat p-0 shadow-none">
+          <div className="p-5 sm:p-7">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-mono text-[10px] tracking-wide text-white/60">
+                  02 / пробный оттиск
+                </p>
+                <h2 className="mt-1 text-[17px] font-medium text-white">
+                  Предпросмотр
+                </h2>
+              </div>
+              {id ? (
+                <button
+                  type="button"
+                  onClick={() => void copyId(id)}
+                  title="Скопировать ID"
+                  aria-label={`Скопировать ID ${id}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 font-mono text-[11px] tracking-wide text-white/75 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/50"
+                >
+                  ID {id}
+                  <Copy className="size-3 opacity-60" aria-hidden="true" />
+                </button>
+              ) : (
+                <span className="pt-1.5 font-mono text-[11px] text-white/45">ID —</span>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-center sm:mt-8">
+              <div className="relative w-full max-w-[440px]">
+                <span
+                  className="pointer-events-none absolute -left-3 -top-3 size-4 border-l border-t border-white/25"
+                  aria-hidden="true"
+                />
+                <span
+                  className="pointer-events-none absolute -right-3 -top-3 size-4 border-r border-t border-white/25"
+                  aria-hidden="true"
+                />
+                <span
+                  className="pointer-events-none absolute -bottom-3 -left-3 size-4 border-b border-l border-white/25"
+                  aria-hidden="true"
+                />
+                <span
+                  className="pointer-events-none absolute -bottom-3 -right-3 size-4 border-b border-r border-white/25"
+                  aria-hidden="true"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setZoomOpen(true)}
+                  disabled={!design}
+                  title={design ? "Открыть метку крупно" : "Введите название"}
+                  aria-label={design ? "Открыть метку крупно" : "Введите название метки"}
+                  className="group/zoom relative block w-full cursor-zoom-in overflow-hidden bg-white p-2 text-left shadow-[0_24px_60px_-24px_rgba(0,0,0,0.55)] ring-1 ring-black/10 disabled:cursor-default"
+                >
+                  {design ? (
                     <canvas
                       ref={previewRef}
-                      className="block h-auto w-full"
+                      className="anim-paper block h-auto w-full"
                       aria-label="Предпросмотр метки"
                     />
-                    {/* Подсказка зума: появляется при наведении */}
-                    <span className="pointer-events-none absolute right-3 top-3 grid size-8 place-items-center rounded-full bg-white/85 text-stone-700 opacity-0 shadow-soft-sm backdrop-blur-sm transition-opacity duration-200 group-hover/zoom:opacity-100 dark:bg-stone-900/85 dark:text-stone-200">
-                      <Maximize2 className="size-4" aria-hidden="true" />
+                  ) : (
+                    <>
+                      <SampleMarkerCanvas />
+                      <span className="absolute inset-0 flex flex-col items-center justify-center bg-white/75 p-6 text-center">
+                        <span className="font-mono text-[10px] tracking-wide text-ink-muted">
+                          Макет
+                        </span>
+                        <span className="mt-2 text-lg font-medium text-ink">
+                          Введите название
+                        </span>
+                        <span className="mt-1 text-xs text-ink-muted">
+                          Узор и подпись появятся здесь
+                        </span>
+                      </span>
+                    </>
+                  )}
+                  {design && (
+                    <span className="pointer-events-none absolute right-4 top-4 grid size-8 place-items-center rounded-lg border border-line bg-card/90 text-ink-soft opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/zoom:opacity-100">
+                      <Maximize2 className="size-3.5" aria-hidden="true" />
                     </span>
-                  </button>
-                </div>
-              ) : (
-                /* Пустое состояние: компактный онбординг из двух шагов —
-                   вместо высокой пустой заглушки */
-                <div className="mx-auto flex w-full max-w-[480px] flex-1 flex-col justify-center gap-4 rounded-[24px] border-2 border-dashed border-stone-300/80 bg-stone-100/60 p-5 sm:p-6 dark:border-stone-700/80 dark:bg-stone-800/50">
-                  <p className="text-center text-xs font-medium text-stone-500 dark:text-stone-400">
-                    Как это работает
-                  </p>
-                  <ol className="grid list-none gap-2.5 sm:grid-cols-2">
-                    {[
-                      {
-                        icon: Type,
-                        title: "Введите название",
-                        text: "Узор метки уникален для каждого названия",
-                      },
-                      {
-                        icon: Download,
-                        title: "Скачайте и распечатайте",
-                        text: "JPG для Vuforia или PDF для печати",
-                      },
-                    ].map((step) => (
-                      <li
-                        key={step.title}
-                        className="flex items-start gap-3 rounded-2xl bg-white/80 px-4 py-4 dark:bg-stone-800/70"
-                      >
-                        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300">
-                          <step.icon className="size-4" aria-hidden="true" />
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block text-[13px] font-medium leading-snug text-stone-800 break-words dark:text-stone-200">
-                            {step.title}
-                          </span>
-                          <span className="mt-1 block text-xs leading-snug text-stone-500 break-words dark:text-stone-400">
-                            {step.text}
-                          </span>
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
+                  )}
+                </button>
+
+                <div
+                  className="ruler-ticks pointer-events-none absolute -bottom-4 left-0 right-0 h-2 text-white/25"
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
+
+            <div className="mt-7 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-white/10 pt-4 font-mono text-[10px] text-white/65">
+              <span>2048 px</span>
+              <span className="text-white/30">/</span>
+              <span>JPEG · RGB</span>
+              <span className="text-white/30">/</span>
+              <span>{printSizeCm} см при печати</span>
+              <span className="ml-auto inline-flex items-center gap-1.5 text-white/80">
+                {design ? (
+                  <>
+                    <Check className="size-3 text-emerald-400" aria-hidden="true" />
+                    Готово к Vuforia
+                  </>
+                ) : (
+                  "Ожидает название"
+                )}
+              </span>
+            </div>
+          </div>
+        </Card>
+
+        {/* 03 — архив */}
+        <Card className="gap-0 rounded-[20px] border-line bg-card py-0 shadow-none lg:col-span-2">
+          <div className="flex flex-col gap-4 border-b border-line px-5 py-4 sm:flex-row sm:items-center sm:px-6">
+            <div className="flex items-center gap-3">
+              <span className="grid size-8 place-items-center rounded-lg border border-line bg-paper text-ink-soft">
+                <History className="size-4" aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="text-[15px] font-semibold tracking-tight text-ink">
+                  Архив меток
+                </h2>
+                <p className="mt-0.5 text-[11px] text-ink-muted">
+                  {pluralMarkers(total)}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+              {total > 0 && (
+                <div className="relative w-full min-w-0 sm:w-56 sm:flex-none">
+                  <Search
+                    className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-muted"
+                    aria-hidden="true"
+                  />
+                  <input
+                    type="search"
+                    value={historyQuery}
+                    onChange={(e) => setHistoryQuery(e.target.value)}
+                    placeholder="Найти метку"
+                    aria-label="Поиск по названию метки"
+                    className="h-9 w-full rounded-lg border border-line bg-paper pl-8 pr-3 text-[13px] text-ink placeholder:text-ink-muted caret-signal focus-visible:border-ink/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/20"
+                  />
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </div>
 
-        {/* История — третья ячейка грида: левая колонка под панелью.
-            Страница собрана без пустот: карточка заполняет строку целиком,
-            длинный список прокручивается внутри */}
-        <Card className="anim-rise anim-rise-delay-2 flex flex-col gap-0 rounded-[28px] border-stone-200/80 bg-white py-0 shadow-soft lg:col-start-1 lg:row-start-2 lg:h-full dark:border-stone-800 dark:bg-stone-900">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-stone-100 px-5 py-4 dark:border-stone-800/80">
-            <h2
-              id="history-heading"
-              className="flex min-w-0 items-center gap-2 text-[15px] font-semibold tracking-tight text-stone-900 dark:text-stone-100"
-            >
-              <History className="size-4 shrink-0 text-stone-400 dark:text-stone-500" aria-hidden="true" />
-              История меток
-              <Badge variant="secondary" className="bg-stone-100 text-stone-600 tabular-nums dark:bg-stone-800 dark:text-stone-300">
-                {history.length + cloudOnlyItems.length}
-              </Badge>
-              {/* Статус синхронизации: локально / синхронизировано / ошибка */}
               <button
                 type="button"
                 onClick={() => {
-                  if (cloud.status === "on" || cloud.status === "error" || cloud.status === "syncing") void refreshCloud();
+                  if (CLOUD_ON) void refreshCloud();
                 }}
                 aria-live="polite"
                 title={
-                  cloud.status === "on"
-                    ? `${cloud.items.length} меток в общей БД — обновить список`
-                    : cloud.status === "error"
-                      ? "Общая БД недоступна — попробовать снова"
-                      : "Общая БД не подключена. История хранится в этом браузере (IndexedDB). Инструкция — HOSTING.md"
+                  !CLOUD_ON
+                    ? "Общая БД не подключена. История хранится в этом браузере (IndexedDB)"
+                    : cloud.status === "on"
+                      ? `${pluralMarkers(cloud.items.length)} в общей БД — обновить список`
+                      : cloud.status === "error"
+                        ? "Общая БД недоступна — попробовать снова"
+                        : "Идёт синхронизация с общей БД"
                 }
-                className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:focus-visible:ring-stone-600/50"
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-card px-2.5 text-[11px] font-medium text-ink-soft transition-colors hover:bg-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/20"
               >
-                {cloud.status === "on" && (
-                  <Cloud className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-                )}
-                {cloud.status === "syncing" && (
-                  <Cloud className="size-3.5 animate-pulse text-stone-400 dark:text-stone-500" aria-hidden="true" />
-                )}
-                {(cloud.status === "off" || cloud.status === "error") && (
-                  <CloudOff
-                    className={`size-3.5 ${cloud.status === "error" ? "text-red-500" : "text-stone-400 dark:text-stone-500"}`}
+                <span className={`size-1.5 rounded-full ${cloudDot}`} aria-hidden="true" />
+                {cloudLabel}
+                {CLOUD_ON && (
+                  <RefreshCw
+                    className={`size-3 ${cloud.status === "syncing" ? "animate-spin" : ""}`}
                     aria-hidden="true"
                   />
                 )}
-                <span
-                  className={
-                    cloud.status === "on"
-                      ? "text-emerald-700 dark:text-emerald-400"
-                      : cloud.status === "error"
-                        ? "text-red-600 dark:text-red-400"
-                        : "text-stone-400 dark:text-stone-500"
-                  }
-                >
-                  {cloud.status === "on"
-                    ? "Общая БД"
-                    : cloud.status === "syncing"
-                      ? "Синхронизация…"
-                      : cloud.status === "error"
-                        ? "БД недоступна"
-                        : "Локально"}
-                </span>
               </button>
-            </h2>
-            {history.length + cloudOnlyItems.length > 0 && (
-              <div className="ml-auto flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handlePdfAll}
-                  disabled={pdfAllBusy}
-                  title="Скачать PDF: все метки по 16 см, по одной на лист A4"
-                  className="rounded-full text-stone-500 hover:bg-stone-100 hover:text-stone-700 disabled:pointer-events-none disabled:opacity-50 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-200"
-                >
-                  <FileDown
-                    className={`size-4 ${pdfAllBusy ? "animate-pulse" : ""}`}
-                    aria-hidden="true"
-                  />
-                  {pdfAllBusy ? "Готовим…" : "PDF всех"}
-                </Button>
-                <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="rounded-full text-stone-500 hover:bg-red-50 hover:text-red-600 dark:text-stone-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
-                    >
-                      <Trash2 className="size-4" aria-hidden="true" />
-                      Очистить
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent className="rounded-[24px] border-stone-200/80 bg-white text-stone-900 shadow-soft dark:border-stone-800 dark:bg-stone-900 dark:text-stone-100">
-                    <AlertDialogHeader>
-                      <AlertDialogTitle className="text-stone-900 dark:text-stone-100">
-                        {CLOUD_ON ? "Очистить общую БД?" : "Очистить историю?"}
-                      </AlertDialogTitle>
-                      <AlertDialogDescription className="text-stone-500 dark:text-stone-400">
-                        {CLOUD_ON
-                          ? `Все метки (${history.length + cloudOnlyItems.length}) удалятся из общей БД у всех пользователей. Скачанные JPG и PDF это не затронет.`
-                          : `Все сохранённые метки (${history.length}) пропадут из списка. Скачанные JPG и PDF это не затронет.`}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel className="rounded-full border-transparent bg-stone-100 text-stone-700 hover:bg-stone-200 hover:text-stone-900 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700 dark:hover:text-stone-100">
-                        Отмена
-                      </AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={clearHistory}
-                        className="rounded-full bg-red-600 text-white hover:bg-red-500"
+
+              {total > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handlePdfAll}
+                    disabled={pdfAllBusy}
+                    title="Скачать PDF: все метки по 16 см, по одной на лист A4"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-card px-2.5 text-[11px] font-medium text-ink-soft transition-colors hover:bg-paper disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <FileDown
+                      className={`size-3.5 ${pdfAllBusy ? "animate-pulse" : ""}`}
+                      aria-hidden="true"
+                    />
+                    {pdfAllBusy ? "Готовим…" : "PDF всех"}
+                  </button>
+
+                  <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={CLOUD_ON ? "Очистить общую БД" : "Очистить архив"}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-card px-2.5 text-[11px] font-medium text-ink-soft transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-700 dark:hover:border-red-900/60 dark:hover:bg-red-950/40 dark:hover:text-red-300"
                       >
-                        Очистить
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-            )}
+                        <Trash2 className="size-3.5" aria-hidden="true" />
+                        <span className="hidden sm:inline">Очистить</span>
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent className="rounded-[16px] border-line bg-card text-ink">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle className="text-ink">
+                          {CLOUD_ON ? "Очистить общую БД?" : "Очистить архив?"}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="text-ink-soft">
+                          {CLOUD_ON
+                            ? `Все метки (${total}) удалятся из общей БД у всех пользователей. Скачанные JPG и PDF это не затронет.`
+                            : `Все сохранённые метки (${total}) пропадут из архива. Скачанные JPG и PDF это не затронет.`}
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel className="rounded-lg border-line bg-paper text-ink hover:bg-card">
+                          Отмена
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={clearHistory}
+                          className="rounded-lg bg-red-600 text-white hover:bg-red-500"
+                        >
+                          Очистить
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </>
+              )}
+            </div>
           </div>
 
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
-            {/* Пока общая БД не подключена — честно предупреждаем */}
+          <div className="px-5 py-4 sm:px-6">
             {!CLOUD_ON && (
-              <p className="rounded-2xl bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                Локальный режим: метки видны только в этом браузере. Для общей работы
-                подключите Supabase — инструкция в HOSTING.md.
-              </p>
+              <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-200/70 bg-amber-50/60 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-200">
+                <CloudOff className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  Локальный кэш: метки видны только в этом браузере.{" "}
+                  <a
+                    href="https://github.com/Tiasssd/qr-marker-generator/blob/main/HOSTING.md"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium underline underline-offset-2"
+                  >
+                    Как включить общую БД
+                  </a>
+                </span>
+              </div>
             )}
 
-            {/* Поиск по названию: появляется, когда список реально длинный */}
-            {history.length + cloudOnlyItems.length >= 6 && (
-              <div className="relative">
-                <Search
-                  className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
-                  aria-hidden="true"
-                />
-                <input
-                  type="search"
-                  value={historyQuery}
-                  onChange={(e) => setHistoryQuery(e.target.value)}
-                  placeholder="Поиск по названию"
-                  aria-label="Поиск по названию метки"
-                  className="h-10 w-full rounded-full border border-stone-200 bg-stone-50/80 pl-9 pr-4 text-sm text-stone-900 placeholder:text-stone-400 caret-orange-600 focus-visible:border-stone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:border-stone-700 dark:bg-stone-800/60 dark:text-stone-100 dark:placeholder:text-stone-500 dark:focus-visible:border-stone-600 dark:focus-visible:ring-stone-500/30"
-                />
+            {cloudError && (
+              <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-red-200/70 bg-red-50/60 px-3 py-2.5 text-[11px] leading-relaxed text-red-800 dark:border-red-900/40 dark:bg-red-950/25 dark:text-red-300">
+                <CloudOff className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  Общая БД недоступна. Показан локальный кэш.{" "}
+                  <button
+                    type="button"
+                    onClick={() => void refreshCloud()}
+                    className="font-medium underline underline-offset-2"
+                  >
+                    Повторить
+                  </button>
+                </span>
               </div>
             )}
+
             {dbLoading ? (
-              /* Пока IndexedDB открывается, не показываем ложное «пусто» */
-              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center dark:border-stone-800 dark:bg-stone-800/40">
-                <Shapes className="size-6 animate-pulse text-stone-300 dark:text-stone-600" aria-hidden="true" />
-                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500 dark:text-stone-400">
-                  Загружаем историю из браузерной БД…
-                </p>
+              <div className="space-y-2 py-2">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="h-14 animate-pulse rounded-lg bg-paper"
+                  />
+                ))}
               </div>
-            ) : history.length === 0 && cloudOnlyItems.length === 0 ? (
-              /* Тихая центрированная подсказка вместо большой пустой коробки */
-              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center dark:border-stone-800 dark:bg-stone-800/40">
-                <Shapes className="size-6 text-stone-300 dark:text-stone-600" aria-hidden="true" />
-                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500 dark:text-stone-400">
-                  Скачайте первую метку — она появится здесь
-                </p>
+            ) : total === 0 ? (
+              <div className="flex min-h-[180px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-line bg-paper/40 px-6 py-8 text-center">
+                <span className="grid size-10 place-items-center rounded-lg border border-line bg-card text-ink-muted">
+                  <Shapes className="size-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="text-[13px] font-medium text-ink">
+                    Здесь появятся ваши метки
+                  </p>
+                  <p className="mt-1 max-w-[280px] text-[11px] leading-relaxed text-ink-muted">
+                    Введите название и скачайте JPG — метка сразу попадёт в архив.
+                  </p>
+                </div>
               </div>
-            ) : filteredHistory.length === 0 && filteredCloud.length === 0 ? (
-              /* Запрос ничего не нашёл — тихое состояние, без коробки-громилы */
-              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center dark:border-stone-800 dark:bg-stone-800/40">
-                <SearchX className="size-6 text-stone-300 dark:text-stone-600" aria-hidden="true" />
-                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500 dark:text-stone-400">
+            ) : visibleHistory.length === 0 ? (
+              <div className="flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line bg-paper/40 px-6 py-8 text-center">
+                <SearchX className="size-5 text-ink-muted" aria-hidden="true" />
+                <p className="text-[12px] text-ink-muted">
                   Ничего не найдено по «{historyQuery.trim()}»
                 </p>
               </div>
             ) : (
-              <ul className="flex list-none flex-col gap-3 lg:max-h-[65vh] lg:overflow-y-auto lg:overscroll-contain lg:pr-1.5">
-                {filteredHistory.map((item, i) => (
+              <ul className="divide-y divide-line">
+                {visibleHistory.map((item) => (
                   <li key={item.id}>
                     <HistoryCard
                       item={item}
-                      index={i}
-                      onDownload={downloadItem}
-                      onLoad={loadItem}
-                      onDelete={deleteItem}
-                    />
-                  </li>
-                ))}
-                {filteredCloud.map((item, i) => (
-                  <li key={`cloud-${item.id}`}>
-                    <HistoryCard
-                      item={item}
-                      index={filteredHistory.length + i}
-                      cloud
+                      cloud={item.fromCloud === true}
                       onDownload={downloadItem}
                       onLoad={loadItem}
                       onDelete={deleteItem}
@@ -1303,75 +1426,66 @@ export function MarkerStudio() {
                 ))}
               </ul>
             )}
+          </div>
 
-            {/* Счётчик уникальных узоров: ёмкость алфавита 5×5 (полный перебор)
-                и сколько мест уже занято — локальная история + облако */}
-            <div
-              className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-stone-100 pt-3 text-[11px] text-stone-400 tabular-nums dark:border-stone-800/80 dark:text-stone-500"
-              title="Узор метки — матрица 5×5 с правилами плотности, серий и поворотной асимметрии. Ёмкость всех допустимых узоров подсчитана полным перебором (scripts/count_patterns.ts). Занято — уникальные названия в истории и облаке."
-            >
-              <span>
-                Уникальных узоров:{" "}
-                <span className="font-medium text-stone-500 dark:text-stone-400">
-                  {PATTERN_CAPACITY.toLocaleString("ru-RU")}
-                </span>
-              </span>
-              <span aria-live="polite">Занято: {history.length + cloudOnlyItems.length}</span>
-              <span
-                title={
-                  CLOUD_ON
-                    ? "Общая БД — Supabase. IndexedDB/localStorage работают как локальный кэш и офлайн-копия"
-                    : "Где сейчас хранится история: IndexedDB — основная БД браузера, localStorage — запасное хранилище, память — крайний случай"
-                }
-                className="text-stone-300 dark:text-stone-600"
-              >
-                БД:{" "}
-                {dbLoading
-                  ? "…"
-                  : CLOUD_ON
-                    ? cloud.status === "on"
-                      ? "Supabase"
-                      : cloud.status === "syncing"
-                        ? "подключение…"
-                        : "кэш"
-                    : storageLabel(dbMode)}
-              </span>
-            </div>
-          </CardContent>
+          <div className="flex items-center justify-end border-t border-line px-5 py-3 font-mono text-[10px] text-ink-muted sm:px-6">
+            <span>БД: {dbLabel}</span>
+          </div>
         </Card>
       </div>
 
-      {/* Мобильная липкая панель: скачать, не прокручивая наверх */}
-      {design && (
-        <div className="marker-sticky-bar fixed inset-x-3 bottom-3 z-30 rounded-[24px] border border-stone-200/80 bg-white/95 pb-[env(safe-area-inset-bottom)] shadow-soft-lg backdrop-blur-md print:hidden lg:hidden dark:border-stone-700/80 dark:bg-stone-900/95">
-          <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-stone-900 dark:text-stone-100" title={name}>
+      {/* Мобильная панель — появляется, когда основные действия ушли из вида */}
+      {design && showSticky && (
+        <div className="marker-sticky-bar fixed inset-x-3 bottom-3 z-30 rounded-[16px] border border-line bg-card/95 p-2 shadow-lg backdrop-blur-md print:hidden lg:hidden dark:bg-card/95">
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1 px-1">
+              <div
+                className="truncate text-[13px] font-medium text-ink"
+                title={name}
+              >
                 {name}
               </div>
-              <div className="font-mono text-xs tracking-wider text-orange-700 dark:text-orange-400">{id}</div>
+              <div className="font-mono text-[10px] text-signal">{id}</div>
             </div>
-            <Button
+            <button
               type="button"
               onClick={handleDownload}
-              className="h-11 shrink-0 rounded-full bg-stone-900 px-5 font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 active:scale-[0.98] dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
+              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-ink px-3 text-[12px] font-semibold text-paper transition-colors hover:bg-ink/90"
             >
-              <Download className="size-5" aria-hidden="true" />
-              Скачать
-            </Button>
+              <Download className="size-4" aria-hidden="true" />
+              JPG
+            </button>
+            <button
+              type="button"
+              onClick={() => void handlePdf()}
+              aria-label="Скачать PDF для печати"
+              title="PDF для печати"
+              className="grid size-10 shrink-0 place-items-center rounded-lg border border-line bg-card text-ink-soft transition-colors hover:bg-paper hover:text-ink"
+            >
+              <FileDown className="size-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleShare()}
+              aria-label="Поделиться ссылкой"
+              title="Поделиться"
+              className="grid size-10 shrink-0 place-items-center rounded-lg border border-line bg-card text-ink-soft transition-colors hover:bg-paper hover:text-ink"
+            >
+              <Share2 className="size-4" aria-hidden="true" />
+            </button>
           </div>
         </div>
       )}
 
       {/* Крупный просмотр метки */}
       <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
-        <DialogContent className="max-w-[min(92vw,720px)] rounded-[28px] border-stone-200/80 bg-white p-4 shadow-soft sm:p-6 dark:border-stone-800 dark:bg-stone-900">
+        <DialogContent className="max-w-[min(92vw,760px)] rounded-[20px] border-line bg-card p-4 shadow-soft sm:p-6">
           <DialogHeader className="sr-only">
             <DialogTitle>Метка крупно</DialogTitle>
             <DialogDescription>Увеличенный предпросмотр метки</DialogDescription>
           </DialogHeader>
-          <div className="mx-auto w-full max-w-[640px] rounded-[24px] bg-stone-100/80 p-4 sm:p-5 dark:bg-stone-800/60">
-            <div className="overflow-hidden rounded-[16px] bg-white shadow-soft ring-1 ring-stone-200/90 dark:ring-stone-700/90">
+          <div className="mx-auto w-full max-w-[640px] rounded-[16px] bg-mat p-4 sm:p-6">
+            <div className="overflow-hidden bg-white p-2 shadow-[0_24px_60px_-24px_rgba(0,0,0,0.55)] ring-1 ring-black/10">
               <canvas
                 ref={drawZoom}
                 className="block h-auto w-full"
@@ -1379,16 +1493,16 @@ export function MarkerStudio() {
               />
             </div>
           </div>
-          <DialogFooter className="mt-1 sm:justify-center">
-            <Button
+          <DialogFooter className="mt-2 sm:justify-center">
+            <button
               type="button"
               onClick={handleDownload}
               disabled={downloadDisabled}
-              className="h-11 rounded-full bg-stone-900 px-6 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
+              className="inline-flex h-11 items-center gap-2 rounded-xl bg-ink px-6 text-[14px] font-semibold text-paper transition-colors hover:bg-ink/90 disabled:pointer-events-none disabled:opacity-40"
             >
-              <Download className="size-5" aria-hidden="true" />
+              <Download className="size-4" aria-hidden="true" />
               Скачать JPG
-            </Button>
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

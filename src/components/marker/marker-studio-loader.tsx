@@ -23,50 +23,67 @@ function useIsClient(): boolean {
   );
 }
 
-/* Каркас повторяет реальную сетку студии (те же колонки, строки и gap) —
-   без прыжка вёрстки при подмене скелета на живой компонент:
-   панель — слева сверху, предпросмотр — справа на две строки,
-   история — слева под панелью.
-   Один и тот же JSX и для loading у dynamic(), и для гейта гидрации —
-   серверный HTML и первый клиентский рендер идентичны. */
+/* Каркас повторяет новую сетку студии: панель слева, предпросмотр
+   справа, архив — во всю ширину под ними. */
 function StudioSkeleton() {
   return (
     <div
       aria-hidden="true"
-      className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(340px,420px)_1fr] lg:items-start"
+      className="grid gap-6 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)] lg:items-start"
     >
       {/* Панель метки */}
-      <div className="space-y-5 rounded-[28px] border border-stone-200/80 bg-white p-6 shadow-soft lg:col-start-1 lg:row-start-1 dark:border-stone-800 dark:bg-stone-900">
+      <div className="flex flex-col gap-5 rounded-[20px] border border-line bg-card p-5 sm:p-6">
         <div className="space-y-2">
-          <div className="h-4 w-24 animate-pulse rounded-full bg-stone-100 dark:bg-stone-800" />
-          <div className="h-14 w-full animate-pulse rounded-2xl bg-stone-100 dark:bg-stone-800" />
+          <div className="h-3 w-24 animate-pulse rounded bg-paper" />
+          <div className="h-5 w-32 animate-pulse rounded bg-paper" />
+          <div className="h-12 w-full animate-pulse rounded-xl bg-paper" />
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="h-12 flex-1 animate-pulse rounded-full bg-stone-200/80 dark:bg-stone-700/80" />
-          <div className="h-12 w-24 animate-pulse rounded-full bg-stone-100 dark:bg-stone-800" />
+        <div className="h-14 w-full animate-pulse rounded-xl bg-paper" />
+        <div className="grid grid-cols-2 gap-2.5">
+          <div className="col-span-2 h-14 animate-pulse rounded-xl bg-paper" />
+          <div className="h-20 animate-pulse rounded-xl bg-paper" />
+          <div className="h-20 animate-pulse rounded-xl bg-paper" />
         </div>
         <div className="space-y-2">
-          <div className="h-4 w-28 animate-pulse rounded-full bg-stone-100 dark:bg-stone-800" />
-          <div className="h-12 w-full animate-pulse rounded-full bg-stone-100 dark:bg-stone-800" />
+          <div className="h-4 w-28 animate-pulse rounded bg-paper" />
+          <div className="h-11 w-full animate-pulse rounded-xl bg-paper" />
+          <div className="h-3 w-44 animate-pulse rounded bg-paper" />
         </div>
       </div>
+
       {/* Предпросмотр */}
-      <div className="rounded-[28px] border border-stone-200/80 bg-white shadow-soft lg:col-start-2 lg:row-span-2 lg:row-start-1 dark:border-stone-800 dark:bg-stone-900">
-        <div className="flex items-center justify-between px-6 py-6">
-          <div className="h-6 w-32 animate-pulse rounded-full bg-stone-100 dark:bg-stone-800" />
-          <div className="h-4 w-20 animate-pulse rounded-full bg-stone-100 dark:bg-stone-800" />
+      <div className="rounded-[20px] border border-line bg-card p-5 sm:p-7">
+        <div className="flex items-center justify-between">
+          <div className="space-y-2">
+            <div className="h-3 w-28 animate-pulse rounded bg-paper" />
+            <div className="h-5 w-36 animate-pulse rounded bg-paper" />
+          </div>
+          <div className="h-8 w-28 animate-pulse rounded-lg bg-paper" />
         </div>
-        <div className="px-6 pb-6">
-          <div className="mx-auto aspect-square max-w-[440px] animate-pulse rounded-[20px] bg-stone-100 dark:bg-stone-800" />
+        <div className="mx-auto mt-7 aspect-[0.86] w-full max-w-[440px] animate-pulse rounded-sm bg-paper" />
+        <div className="mt-7 flex gap-4 border-t border-line pt-4">
+          <div className="h-3 w-16 animate-pulse rounded bg-paper" />
+          <div className="h-3 w-20 animate-pulse rounded bg-paper" />
+          <div className="h-3 w-24 animate-pulse rounded bg-paper" />
         </div>
       </div>
-      {/* История */}
-      <div className="rounded-[28px] border border-stone-200/80 bg-white shadow-soft lg:col-start-1 lg:row-start-2 dark:border-stone-800 dark:bg-stone-900">
-        <div className="flex items-center justify-between border-b border-stone-100 px-5 py-4 dark:border-stone-800/80">
-          <div className="h-4 w-36 animate-pulse rounded-full bg-stone-100 dark:bg-stone-800" />
+
+      {/* Архив */}
+      <div className="rounded-[20px] border border-line bg-card lg:col-span-2">
+        <div className="flex items-center justify-between border-b border-line px-5 py-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <div className="size-8 animate-pulse rounded-lg bg-paper" />
+            <div className="space-y-1.5">
+              <div className="h-4 w-32 animate-pulse rounded bg-paper" />
+              <div className="h-3 w-24 animate-pulse rounded bg-paper" />
+            </div>
+          </div>
+          <div className="h-9 w-56 animate-pulse rounded-lg bg-paper" />
         </div>
-        <div className="px-5 py-4">
-          <div className="h-24 animate-pulse rounded-[20px] bg-stone-100/70 dark:bg-stone-800/70" />
+        <div className="space-y-3 px-5 py-4 sm:px-6">
+          <div className="h-16 animate-pulse rounded-lg bg-paper" />
+          <div className="h-16 animate-pulse rounded-lg bg-paper" />
+          <div className="h-16 animate-pulse rounded-lg bg-paper" />
         </div>
       </div>
     </div>
