@@ -1157,11 +1157,11 @@ export function MarkerStudio() {
                   aria-hidden="true"
                 />
                 <span
-                  className="pointer-events-none absolute -bottom-2 -left-4 size-3 border-b border-l border-white/25"
+                  className="pointer-events-none absolute -bottom-2 -left-5 size-3 border-b border-l border-white/25"
                   aria-hidden="true"
                 />
                 <span
-                  className="pointer-events-none absolute -bottom-2 -right-4 size-3 border-b border-r border-white/25"
+                  className="pointer-events-none absolute -bottom-2 -right-5 size-3 border-b border-r border-white/25"
                   aria-hidden="true"
                 />
 
@@ -1207,7 +1207,7 @@ export function MarkerStudio() {
                 </button>
 
                 <div
-                  className="ruler-ticks pointer-events-none absolute -bottom-4 left-0 right-0 h-2 text-white/25"
+                  className="ruler-ticks pointer-events-none absolute -bottom-6 left-0 right-0 h-2 text-white/25"
                   aria-hidden="true"
                 />
               </div>
