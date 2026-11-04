@@ -9,8 +9,13 @@
  * Без ключей приложение честно работает на локальной IndexedDB.
  */
 
-const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").replace(/\/+$/, "");
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+/* Принимаем и Project URL, и полный REST-адрес из дашборда:
+   https://xxx.supabase.co и https://xxx.supabase.co/rest/v1/ */
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")
+  .trim()
+  .replace(/\/+$/, "")
+  .replace(/\/rest\/v1$/i, "");
+const SUPABASE_ANON_KEY = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim();
 
 /** Включена ли общая БД в этой сборке (ключи заданы при деплое) */
 export function cloudEnabled(): boolean {
