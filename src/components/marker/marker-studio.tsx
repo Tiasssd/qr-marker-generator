@@ -1157,11 +1157,11 @@ export function MarkerStudio() {
                   aria-hidden="true"
                 />
                 <span
-                  className="pointer-events-none absolute -bottom-3 -left-3 size-4 border-b border-l border-white/25"
+                  className="pointer-events-none absolute -bottom-2 -left-4 size-3 border-b border-l border-white/25"
                   aria-hidden="true"
                 />
                 <span
-                  className="pointer-events-none absolute -bottom-3 -right-3 size-4 border-b border-r border-white/25"
+                  className="pointer-events-none absolute -bottom-2 -right-4 size-3 border-b border-r border-white/25"
                   aria-hidden="true"
                 />
 
