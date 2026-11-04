@@ -17,8 +17,9 @@
    git branch -M main
    git push -u origin main
    ```
-2. Откройте **Settings → Pages** и в разделе **Build and deployment** выберите источник **GitHub Actions**.
-3. Workflow `.github/workflows/deploy.yml` сам соберёт сайт и опубликует его. Ссылка появится во вкладке **Actions → Deploy to GitHub Pages** и в **Settings → Pages**.
+2. Первый push запустит workflow `.github/workflows/deploy.yml`; он соберёт сайт и создаст ветку `gh-pages`.
+3. Откройте **Settings → Pages**, в разделе **Build and deployment** выберите **Deploy from a branch**, ветку **gh-pages** и папку **/(root)**.
+4. Ссылка появится в **Settings → Pages**. Дальше каждый push в `main` пересобирает и обновляет `gh-pages` автоматически.
 
 Для project pages адрес будет таким:
 
@@ -36,12 +37,15 @@ https://USER.github.io/
 
 ## Что происходит при деплое
 
-1. `actions/configure-pages` вычисляет базовый путь.
+1. Workflow вычисляет базовый путь: `/REPO` для project pages или пустой для `USER.github.io`.
 2. `npm ci` ставит зависимости по `package-lock.json`.
 3. `npm run build` собирает статический сайт в папку `out/`.
-4. `actions/upload-pages-artifact` и `actions/deploy-pages` публикуют `out/`.
+4. Содержимое `out/` пушится в ветку `gh-pages` (старым коммитом, без истории сборок).
+5. GitHub Pages публикует ветку `gh-pages`.
 
 В `public/.nojekyll` лежит пустой файл — он не даёт GitHub Pages трогать папку `_next`.
+
+Такой способ выбран намеренно: он не зависит от Pages Deployment API и не ломается, если предыдущий деплой завис.
 
 ## Локальный запуск
 
@@ -135,6 +139,9 @@ Vuforia жалуется на «неподдерживаемый тип цвет
 
 **Workflow падает на `npm ci`.**
 Убедитесь, что `package-lock.json` закоммичен. Файл `.npmrc` уже включает `legacy-peer-deps=true` — это нужно из-за соседства React 19 и старых UI-пакетов.
+
+**Workflow прошёл, а сайт не обновился.**
+В **Settings → Pages** источник должен быть **Deploy from a branch → gh-pages → /(root)**, а не «GitHub Actions». Ветку `gh-pages` создаёт сам workflow при первом запуске.
 
 **Не работает Supabase.**
 Проверьте, что оба секрета заданы и workflow перезапущен. В браузере откройте DevTools → Network и посмотрите запросы к `/rest/v1/markers`: если их нет, ключи не попали в сборку; если есть `401/403`, проверьте RLS-политики и SQL-схему.
