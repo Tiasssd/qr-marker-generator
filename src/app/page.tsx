@@ -1,40 +1,12 @@
-import type { Metadata } from "next";
 import { MarkerStudioLoader } from "@/components/marker/marker-studio-loader";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ScanLine } from "lucide-react";
 
 /**
- * Ссылки «Поделиться» выглядят как /?name=Тайфун&size=13 —
- * для соцсетей и мессенджеров генерируем персональную карточку:
- * заголовок с названием метки и branded-картинка.
+ * Страница полностью статическая — это требование GitHub Pages.
+ * Ссылки «Поделиться» (?name=...&size=...) обрабатываются уже в браузере:
+ * студия читает параметры при монтировании и обновляет заголовок вкладки.
  */
-export async function generateMetadata({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}): Promise<Metadata> {
-  const sp = await searchParams;
-  const raw = typeof sp.name === "string" ? sp.name : "";
-  const name = raw.trim().replace(/\s+/g, " ").slice(0, 60);
-  if (!name) return {};
-  const title = `Метка «${name}» — Генератор AR-меток`;
-  return {
-    title,
-    openGraph: {
-      title,
-      description: `Уникальный узор из названия: откройте ссылку и скачайте метку «${name}» для печати.`,
-      siteName: "Генератор AR-меток",
-      type: "website",
-      images: [{ url: "/icons/icon-512.png", width: 512, height: 512, alt: `AR-метка «${name}»` }],
-    },
-    twitter: {
-      card: "summary",
-      title,
-      description: `Уникальный узор из названия: откройте ссылку и скачайте метку «${name}» для печати.`,
-    },
-  };
-}
-
 export default function Home() {
   return (
     <div className="relative flex min-h-screen flex-col bg-background text-foreground">
@@ -65,8 +37,8 @@ export default function Home() {
       {/* Подвал */}
       <footer className="mt-auto border-t border-stone-200/70 dark:border-stone-800/70">
         <div className="mx-auto flex max-w-6xl flex-col gap-1.5 px-4 py-6 text-xs text-stone-500 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6 dark:text-stone-400">
-          <span>Метки генерируются локально в браузере.</span>
-          <span className="shrink-0">У каждой метки — уникальный узор из названия</span>
+          <span>Метки генерируются локально, история — в браузерной БД.</span>
+          <span className="shrink-0">JPG без названия — для Vuforia, PDF — для печати</span>
         </div>
       </footer>
     </div>

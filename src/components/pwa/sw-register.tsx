@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { assetPath } from "@/lib/base-path";
 
 /**
  * Регистрирует service worker (офлайн-оболочка + установка как PWA).
@@ -12,7 +13,10 @@ export function ServiceWorkerRegister() {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
 
     const register = (): void => {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      /* Базовый путь известен на сборке: /repo/ на GitHub Pages, / на своём домене */
+      navigator.serviceWorker
+        .register(assetPath("/sw.js"), { scope: assetPath("/") })
+        .catch(() => undefined);
     };
 
     if (document.readyState === "complete") {

@@ -1,20 +1,31 @@
 /* Service Worker «Генератор AR-меток» — офлайн-оболочка приложения.
-   Версия кеша подставляется при деплое вместо __BUILD_ID__ (scripts/deploy.sh):
-   каждый деплой открывает свежий кеш, старый подчищается на activate.
-
-   Стратегии:
-   - навигация (HTML): сеть -> кеш (офлайн отдаёт сохранённую оболочку);
-   - статика Next (/_next/, хешированные имена) и публичные ассеты: кеш -> сеть;
-   - сам sw.js и manifest не перехватываем — браузер обновляет их сам. */
-const VERSION = "__BUILD_ID__";
-const CACHE = `ar-marker-studio-${VERSION}`;
-const SHELL = ["/", "/manifest.webmanifest", "/icons/favicon-32.png"];
+ *
+ * Работает и в корне домена, и в подпапке GitHub Pages (/repo/):
+ * все пути считаются от расположения самого sw.js, а не от «/».
+ *
+ * Стратегии:
+ * - навигация (HTML): сеть → кеш (офлайн отдаёт сохранённую оболочку);
+ * - хешированная статика Next (/_next/) и публичные ассеты: кеш → сеть;
+ * - сам sw.js не перехватываем — браузер должен обновлять его сам.
+ */
+const VERSION = "v3";
+const CACHE = `qr-marker-studio-${VERSION}`;
+const SCOPE = new URL("./", self.location.href).pathname;
+const SELF_PATH = new URL(self.location.href).pathname;
+const SHELL = [
+  SCOPE,
+  `${SCOPE}manifest.webmanifest`,
+  `${SCOPE}icons/favicon-32.png`,
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(SHELL))
+      .then((cache) =>
+        /* addAll падает целиком из-за одного 404 — грузим по одному */
+        Promise.allSettled(SHELL.map((url) => cache.add(url)))
+      )
       .then(() => self.skipWaiting())
   );
 });
@@ -24,7 +35,16 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+        Promise.all(
+          keys
+            .filter(
+              (key) =>
+                (key.startsWith("qr-marker-studio-") ||
+                  key.startsWith("ar-marker-studio-")) &&
+                key !== CACHE
+            )
+            .map((key) => caches.delete(key))
+        )
       )
       .then(() => self.clients.claim())
   );
@@ -36,33 +56,33 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname === "/sw.js") return;
+  if (url.pathname === SELF_PATH) return;
 
   /* Навигация: свежий HTML из сети, при офлайне — сохранённая оболочка */
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches
-            .open(CACHE)
-            .then((cache) => cache.put("/", copy))
-            .catch(() => undefined);
+          if (res.ok) {
+            const copy = res.clone();
+            caches
+              .open(CACHE)
+              .then((cache) => cache.put(SCOPE, copy))
+              .catch(() => undefined);
+          }
           return res;
         })
-        .catch(() =>
-          caches.match("/").then((hit) => hit || Response.error())
-        )
+        .catch(() => caches.match(SCOPE).then((hit) => hit || Response.error()))
     );
     return;
   }
 
   /* Хешированная статика и публичные ассеты: кеш-первая */
   const cacheable =
-    url.pathname.startsWith("/_next/") ||
-    url.pathname.startsWith("/icons/") ||
-    url.pathname === "/manifest.webmanifest" ||
-    url.pathname === "/robots.txt";
+    url.pathname.startsWith(`${SCOPE}_next/`) ||
+    url.pathname.startsWith(`${SCOPE}icons/`) ||
+    url.pathname === `${SCOPE}manifest.webmanifest` ||
+    url.pathname === `${SCOPE}robots.txt`;
 
   if (cacheable) {
     event.respondWith(
@@ -70,11 +90,13 @@ self.addEventListener("fetch", (event) => {
         (hit) =>
           hit ||
           fetch(req).then((res) => {
-            const copy = res.clone();
-            caches
-              .open(CACHE)
-              .then((cache) => cache.put(req, copy))
-              .catch(() => undefined);
+            if (res.ok) {
+              const copy = res.clone();
+              caches
+                .open(CACHE)
+                .then((cache) => cache.put(req, copy))
+                .catch(() => undefined);
+            }
             return res;
           })
       )

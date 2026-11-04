@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ServiceWorkerRegister } from "@/components/pwa/sw-register";
+import { assetPath } from "@/lib/base-path";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,7 +20,7 @@ export const metadata: Metadata = {
   description:
     "Генератор трекер-меток: название над узором, жирная рамка и крупная матрица 5×5 — уникальный узор выводится из названия и различается камерой даже при слабом освещении.",
   keywords: ["AR-метка", "трекер", "3D-модель", "генератор меток", "marker", "tracking"],
-  manifest: "/manifest.webmanifest",
+  manifest: assetPath("/manifest.webmanifest"),
   applicationName: "Генератор AR-меток",
   appleWebApp: {
     capable: true,
@@ -28,10 +29,16 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/icons/favicon.svg", type: "image/svg+xml" },
-      { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: assetPath("/icons/favicon.svg"), type: "image/svg+xml" },
+      { url: assetPath("/icons/favicon-32.png"), sizes: "32x32", type: "image/png" },
     ],
-    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    apple: [
+      {
+        url: assetPath("/icons/apple-touch-icon.png"),
+        sizes: "180x180",
+        type: "image/png",
+      },
+    ],
   },
   openGraph: {
     title: "Генератор AR-меток — трекер-метки для 3D-машинок",

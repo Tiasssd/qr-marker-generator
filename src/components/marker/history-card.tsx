@@ -3,11 +3,21 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { createMarkerDesign, drawMarker, type MarkerConfig } from "@/lib/marker";
+import {
+  createMarkerDesign,
+  designFromCells,
+  drawMarker,
+  type MarkerConfig,
+} from "@/lib/marker";
 import { Cloud, Copy, Download, RotateCcw, Trash2 } from "lucide-react";
 
 export interface HistoryItem extends MarkerConfig {
+  /** Время последнего действия — для сортировки и подписи */
   ts: number;
+  /** Когда метка создана впервые */
+  createdAt?: number;
+  /** Узор, сохранённый в БД (если есть) */
+  cells?: number[];
 }
 
 interface HistoryCardProps {
@@ -34,7 +44,11 @@ function formatDate(ts: number): string {
 export function HistoryCard({ item, index = 0, cloud = false, onDownload, onLoad, onDelete }: HistoryCardProps) {
   const { toast } = useToast();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const design = useMemo(() => createMarkerDesign(item.id), [item.id]);
+  /* Рисуем сохранённый в БД узор; старые/облачные записи — из ID */
+  const design = useMemo(
+    () => designFromCells(item.cells ?? []) ?? createMarkerDesign(item.id),
+    [item.id, item.cells]
+  );
 
   const copyId = async (): Promise<void> => {
     try {
@@ -101,10 +115,10 @@ export function HistoryCard({ item, index = 0, cloud = false, onDownload, onLoad
           size="sm"
           className="h-9 gap-1.5 rounded-full border-transparent bg-stone-100 text-xs text-stone-600 hover:bg-stone-200 hover:text-stone-900 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
           onClick={() => onDownload(item)}
-          title="Скачать PNG"
+          title="Скачать JPG без названия — для Vuforia"
         >
           <Download className="size-3.5" aria-hidden="true" />
-          Скачать
+          JPG
         </Button>
         <Button
           variant="outline"

@@ -43,18 +43,26 @@ import { useToast } from "@/hooks/use-toast";
 import { HistoryCard, type HistoryItem } from "@/components/marker/history-card";
 import {
   createMarkerDesign,
+  designFromCells,
   deriveId,
   drawMarker,
-  exportMarkerPng,
+  exportMarkerJpeg,
   markerFileName,
   PATTERN_CAPACITY,
-  renderMarkerDataUrl,
+  renderMarkerJpegDataUrl,
   type MarkerConfig,
 } from "@/lib/marker";
+import {
+  clearMarkers,
+  deleteMarker,
+  loadMarkers,
+  saveMarker,
+  type MarkerRecord,
+  type StorageMode,
+} from "@/lib/marker-db";
 import { Copy, Download, FileDown, History, Maximize2, Search, SearchX, Shapes, Share2, Trash2, TriangleAlert, Type, X, Cloud, CloudOff } from "lucide-react";
 import { cloudEnabled, fetchCloudMarkers, pushCloudMarker } from "@/lib/cloud";
 
-const HISTORY_KEY = "ar-marker-studio:history:v2";
 const EXPORT_SIZE = 2048;
 
 /* Статус облачной синхронизации: off — сборка без ключей (локальный режим),
@@ -71,9 +79,36 @@ function normalizeName(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-function signature(it: MarkerConfig): string {
-  // ID и есть идентичность метки: «Молния» и «молния» — один и тот же узор
-  return it.id;
+/* Параметры ссылки «Поделиться»: имя метки и размер печати */
+function readSharedConfig(): { name: string; size: number | null } {
+  if (typeof window === "undefined") return { name: "", size: null };
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const name = (params.get("name") ?? "").trim().slice(0, 60);
+    const rawSize = Number(params.get("size"));
+    const size = rawSize === 10 || rawSize === 13 || rawSize === 16 ? rawSize : null;
+    return { name, size };
+  } catch {
+    return { name: "", size: null };
+  }
+}
+
+/* Запись из БД → элемент истории */
+function toHistoryItem(record: MarkerRecord): HistoryItem {
+  return {
+    name: record.name,
+    id: record.id,
+    ts: record.updatedAt,
+    createdAt: record.createdAt,
+    cells: record.cells.length > 0 ? record.cells : undefined,
+  };
+}
+
+/* Человекочитаемый режим хранения для подвала истории */
+function storageLabel(mode: StorageMode): string {
+  if (mode === "indexeddb") return "IndexedDB";
+  if (mode === "localstorage") return "localStorage";
+  return "в памяти";
 }
 
 /* Декодирование data-URL в Image — для пропорций при раскладке на листе A4 */
@@ -86,39 +121,14 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-/* История: v2 (ID выводится из названия) с миграцией из v1 */
-function loadHistory(): HistoryItem[] {
-  try {
-    const raw =
-      window.localStorage.getItem(HISTORY_KEY) ??
-      window.localStorage.getItem("ar-marker-studio:history:v1");
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const items = parsed
-      .filter(
-        (it): it is HistoryItem =>
-          Boolean(it) &&
-          typeof it === "object" &&
-          typeof (it as HistoryItem).name === "string"
-      )
-      // Название — теперь идентичность метки: ID пересчитываем из него
-      .map((it) => {
-        const name = it.name.trim().replace(/\s+/g, " ");
-        return { name, id: deriveId(name), ts: typeof it.ts === "number" ? it.ts : Date.now() };
-      })
-      .filter((it) => it.name.length > 0);
-    return items.slice(0, 40);
-  } catch {
-    return [];
-  }
-}
-
 export function MarkerStudio() {
   const { toast } = useToast();
-  const [name, setName] = useState("");
-  const [printSizeCm, setPrintSizeCm] = useState(16);
-  const [history, setHistory] = useState<HistoryItem[]>(() => loadHistory());
+  const [initialShare] = useState(readSharedConfig);
+  const [name, setName] = useState(initialShare.name);
+  const [printSizeCm, setPrintSizeCm] = useState(initialShare.size ?? 16);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [dbMode, setDbMode] = useState<StorageMode>("memory");
+  const [dbLoading, setDbLoading] = useState(true);
   const [historyQuery, setHistoryQuery] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [fontsReady, setFontsReady] = useState(false);
@@ -130,6 +140,7 @@ export function MarkerStudio() {
   const previewRef = useRef<HTMLCanvasElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const zoomRef = useRef<HTMLCanvasElement>(null);
+  const historyRef = useRef<HistoryItem[]>([]);
   const [zoomOpen, setZoomOpen] = useState(false);
 
   /* ID выводится из названия: разное название — другой узор,
@@ -173,7 +184,7 @@ export function MarkerStudio() {
     const currentSig = [...design.cells].sort((a, b) => a - b).join(",");
     const others = [...history, ...cloudOnlyItems].filter((it) => it.id !== id);
     for (const it of others) {
-      const other = createMarkerDesign(it.id);
+      const other = designFromCells(it.cells ?? []) ?? createMarkerDesign(it.id);
       if (!other) continue;
       const otherSig = [...other.cells].sort((a, b) => a - b).join(",");
       if (otherSig === currentSig) return it.name;
@@ -182,9 +193,14 @@ export function MarkerStudio() {
   }, [design, id, name, history, cloudOnlyItems]);
 
   /* Загрузка списка из облака (первая + ручное обновление по клику на чип) */
-  const refreshCloud = useCallback(async (): Promise<void> => {
+  const refreshCloud = useCallback(async (showSyncing = true): Promise<void> => {
     if (!CLOUD_ON) return;
-    setCloud((prev) => ({ ...prev, status: prev.status === "on" ? "syncing" : prev.status }));
+    if (showSyncing) {
+      setCloud((prev) => ({
+        ...prev,
+        status: prev.status === "on" ? "syncing" : prev.status,
+      }));
+    }
     try {
       const items = await fetchCloudMarkers();
       setCloud({ status: "on", items });
@@ -194,7 +210,12 @@ export function MarkerStudio() {
   }, []);
 
   useEffect(() => {
-    void refreshCloud();
+    /* Первичная загрузка: статус «syncing» уже стоит в initialState.
+       setTimeout уводит setState из синхронного тела эффекта. */
+    const timer = window.setTimeout(() => {
+      void refreshCloud(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [refreshCloud]);
 
   /* Пуш в облако при «коммите» метки: скачивание, PDF или шеринг.
@@ -205,6 +226,107 @@ export function MarkerStudio() {
       .then(() => refreshCloud())
       .catch(() => setCloud((prev) => (prev.status === "on" ? { ...prev, status: "error" } : prev)));
   };
+
+  /* Загрузка истории из браузерной БД (IndexedDB → localStorage → память) */
+  useEffect(() => {
+    let cancelled = false;
+    void loadMarkers()
+      .then(({ items, mode }) => {
+        if (cancelled) return;
+        const mapped = items.map(toHistoryItem);
+        /* Не затираем метку, которую пользователь успел сохранить,
+           пока IndexedDB ещё открывалась */
+        setHistory((prev) => {
+          const prevIds = new Set(prev.map((it) => it.id));
+          const merged = [
+            ...prev,
+            ...mapped.filter((it) => !prevIds.has(it.id)),
+          ]
+            .sort((a, b) => b.ts - a.ts)
+            .slice(0, 500);
+          historyRef.current = merged;
+          return merged;
+        });
+        setDbMode(mode);
+        setDbLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDbLoading(false);
+        setDbMode("memory");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* Актуальная история для записи в БД без лишних пересозданий колбэка */
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  /* Сохраняет метку в БД и поднимает её в начало списка.
+     Вызывается при скачивании, PDF и шеринге — то есть когда метка
+     реально «выпущена», а не на каждый символ в поле названия. */
+  const rememberMarker = useCallback(
+    (config: MarkerConfig, cells?: readonly number[]): void => {
+      const cleanName = config.name.trim().replace(/\s+/g, " ");
+      if (!cleanName || !config.id) return;
+
+      const patternSource =
+        cells && cells.length > 0
+          ? designFromCells(cells)
+          : createMarkerDesign(config.id);
+      const pattern = patternSource ? [...patternSource.cells] : [];
+
+      const prev = historyRef.current;
+      const existing = prev.find((it) => it.id === config.id);
+      const createdAt = existing?.createdAt ?? Date.now();
+      /* ts всегда растёт — без дублей ключей при быстрых нажатиях */
+      const ts = Math.max(Date.now(), (prev[0]?.ts ?? 0) + 1);
+      const item: HistoryItem = {
+        name: cleanName,
+        id: config.id,
+        ts,
+        createdAt,
+        cells: pattern.length > 0 ? pattern : undefined,
+      };
+
+      const next = [item, ...prev.filter((it) => it.id !== config.id)].slice(0, 500);
+      historyRef.current = next;
+      setHistory(next);
+
+      void saveMarker({
+        id: config.id,
+        name: cleanName,
+        cells: pattern,
+        createdAt,
+        updatedAt: ts,
+      })
+        .then((mode) => setDbMode(mode))
+        .catch(() => undefined);
+    },
+    []
+  );
+
+  /* Возврат удалённой метки (undo в тосте) */
+  const restoreMarker = useCallback((item: HistoryItem): void => {
+    const patternSource =
+      designFromCells(item.cells ?? []) ?? createMarkerDesign(item.id);
+    const pattern = patternSource ? [...patternSource.cells] : [];
+    const next = [item, ...historyRef.current.filter((it) => it.id !== item.id)].slice(0, 500);
+    historyRef.current = next;
+    setHistory(next);
+    void saveMarker({
+      id: item.id,
+      name: item.name,
+      cells: pattern,
+      createdAt: item.createdAt ?? item.ts,
+      updatedAt: item.ts,
+    })
+      .then((mode) => setDbMode(mode))
+      .catch(() => undefined);
+  }, []);
 
   /* Перерисовка предпросмотра после загрузки шрифтов */
   useEffect(() => {
@@ -219,15 +341,6 @@ export function MarkerStudio() {
      физический размер в мм задаётся при раскладке, никакой зависимости
      от настроек диалога печати браузера */
 
-  /* Сохранение истории между сессиями */
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-    } catch {
-      // Хранилище недоступно — история живёт только в памяти сессии
-    }
-  }, [history]);
-
   /* Живой предпросмотр метки */
   useEffect(() => {
     if (!design || !previewRef.current) return;
@@ -239,27 +352,19 @@ export function MarkerStudio() {
     });
   }, [design, name, id, fontsReady]);
 
-  /* Заголовок вкладки отражает текущую метку */
+  /* Заголовок вкладки отражает текущую метку.
+     setTimeout — чтобы не проиграть гонку менеджеру метаданных Next
+     при открытии ссылки «Поделиться», где имя задано ещё до гидрации. */
   useEffect(() => {
     const trimmed = name.trim();
-    document.title = trimmed
+    const title = trimmed
       ? `Метка «${trimmed}» — Генератор AR-меток`
       : "Генератор AR-меток — трекер-метки для 3D-машинок";
+    const timer = window.setTimeout(() => {
+      document.title = title;
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [name]);
-
-  /* Ссылка «Поделиться»: метка открывается по URL с названием и размером.
-     Считываем параметры один раз после монтирования (клиент-only). */
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const shared = params.get("name")?.trim() ?? "";
-      if (shared) setName(shared.slice(0, 60));
-      const size = Number(params.get("size"));
-      if (size === 10 || size === 13 || size === 16) setPrintSizeCm(size);
-    } catch {
-      // URL без параметров — обычный запуск
-    }
-  }, []);
 
   /* Липкая мобильная панель резервирует место внизу страницы (body padding),
      чтобы подвал не оказывался под ней; на десктопе и печати — без резерва */
@@ -298,16 +403,6 @@ export function MarkerStudio() {
     [design, name, id, fontsReady]
   );
 
-  const addToHistory = (config: MarkerConfig): void => {
-    setHistory((prev) => {
-      const sig = signature(config);
-      const rest = prev.filter((it) => signature(it) !== sig);
-      // ts всегда больше предыдущего — уникальные ключи и корректное удаление
-      const ts = Math.max(Date.now(), (rest[0]?.ts ?? 0) + 1);
-      return [{ ...config, ts }, ...rest].slice(0, 40);
-    });
-  };
-
   const saveBlob = (blob: Blob, fileName: string): void => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -330,18 +425,25 @@ export function MarkerStudio() {
       return;
     }
     try {
-      const blob = await exportMarkerPng(design, { name, id, size: EXPORT_SIZE, dpr: 1 });
-      saveBlob(blob, markerFileName(name, id));
-      addToHistory({ name, id });
+      /* Важно: name: "" — картинка для Vuforia без подписи.
+         Квадрат 2048×2048, непрозрачный JPEG, только узор и белый фон. */
+      const blob = await exportMarkerJpeg(design, {
+        name: "",
+        id,
+        size: EXPORT_SIZE,
+        dpr: 1,
+      });
+      saveBlob(blob, markerFileName(name, id, "jpg"));
+      rememberMarker({ name, id }, [...design.cells]);
       pushCloud(name.trim());
       toast({
-        title: "PNG сохранён",
-        description: `Метка «${name.trim()}» — 2048 px по ширине.`,
+        title: "JPG для Vuforia сохранён",
+        description: `«${name.trim()}» — 2048×2048 px, без названия. Готов к загрузке в Vuforia.`,
         variant: "success",
-        duration: 3000,
+        duration: 4000,
       });
     } catch {
-      toast({ title: "Не удалось создать PNG", variant: "destructive", duration: 3500 });
+      toast({ title: "Не удалось создать JPG", variant: "destructive", duration: 3500 });
     }
   };
 
@@ -359,20 +461,23 @@ export function MarkerStudio() {
     try {
       /* jsPDF подтягивается динамически — в основном бандле его нет */
       const { jsPDF } = await import("jspdf");
-      const url = renderMarkerDataUrl(design, { name, id, size: EXPORT_SIZE, dpr: 1 });
+      /* Для печати — версия С названием. Внутри PDF тоже JPEG:
+         без альфа-канала и с предсказуемым цветом. */
+      const url = renderMarkerJpegDataUrl(design, { name, id, size: EXPORT_SIZE, dpr: 1 });
       const img = await loadImage(url);
       const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
       const w = printSizeCm * 10;
       const h = w * (img.naturalHeight / img.naturalWidth);
-      pdf.addImage(url, "PNG", (210 - w) / 2, (297 - h) / 2, w, h);
+      pdf.addImage(url, "JPEG", (210 - w) / 2, (297 - h) / 2, w, h);
       pdf.setProperties({ title: `AR-marker ${id}` });
       saveBlob(pdf.output("blob"), markerFileName(name, id, "pdf"));
+      rememberMarker({ name, id }, [...design.cells]);
       pushCloud(name.trim());
       toast({
-        title: "PDF сохранён",
-        description: `Метка «${name.trim()}» — ${printSizeCm} см на листе A4.`,
+        title: "PDF для печати сохранён",
+        description: `«${name.trim()}» — ${printSizeCm} см на листе A4, с названием.`,
         variant: "success",
-        duration: 3000,
+        duration: 3500,
       });
     } catch {
       toast({ title: "Не удалось создать PDF", variant: "destructive", duration: 3500 });
@@ -395,9 +500,10 @@ export function MarkerStudio() {
         let placed = 0;
         const all = [...history, ...cloudOnlyItems];
         for (const it of all) {
-          const itemDesign = createMarkerDesign(it.id);
+          const itemDesign =
+            designFromCells(it.cells ?? []) ?? createMarkerDesign(it.id);
           if (!itemDesign) continue;
-          const url = renderMarkerDataUrl(itemDesign, {
+          const url = renderMarkerJpegDataUrl(itemDesign, {
             name: it.name,
             id: it.id,
             size: 1100,
@@ -416,7 +522,7 @@ export function MarkerStudio() {
               y = margin;
             }
           }
-          pdf.addImage(url, "PNG", xs[col], y, w, h);
+          pdf.addImage(url, "JPEG", xs[col], y, w, h);
           y += h + gapY;
           placed++;
         }
@@ -443,18 +549,34 @@ export function MarkerStudio() {
 
   const downloadItem = async (item: HistoryItem): Promise<void> => {
     try {
-      const itemDesign = createMarkerDesign(item.id);
+      const itemDesign =
+        designFromCells(item.cells ?? []) ?? createMarkerDesign(item.id);
       if (!itemDesign) throw new Error("Пустой ID метки");
-      const blob = await exportMarkerPng(itemDesign, { name: item.name, id: item.id, size: EXPORT_SIZE, dpr: 1 });
-      saveBlob(blob, markerFileName(item.name, item.id));
-      toast({ title: "PNG сохранён", description: `Метка «${item.name}».`, variant: "success", duration: 2500 });
+      /* Тот же Vuforia-формат, что и из основной панели: без названия */
+      const blob = await exportMarkerJpeg(itemDesign, {
+        name: "",
+        id: item.id,
+        size: EXPORT_SIZE,
+        dpr: 1,
+      });
+      saveBlob(blob, markerFileName(item.name, item.id, "jpg"));
+      rememberMarker({ name: item.name, id: item.id }, [...itemDesign.cells]);
+      toast({
+        title: "JPG сохранён",
+        description: `«${item.name}» — без названия, для Vuforia.`,
+        variant: "success",
+        duration: 2500,
+      });
     } catch {
-      toast({ title: "Не удалось создать PNG", variant: "destructive", duration: 3500 });
+      toast({ title: "Не удалось создать JPG", variant: "destructive", duration: 3500 });
     }
   };
 
   const deleteItem = (item: HistoryItem): void => {
-    setHistory((prev) => prev.filter((it) => it.ts !== item.ts));
+    const next = historyRef.current.filter((it) => it.id !== item.id);
+    historyRef.current = next;
+    setHistory(next);
+    void deleteMarker(item.id).catch(() => undefined);
     toast({
       title: "Метка удалена из истории",
       description: `«${item.name}»`,
@@ -462,7 +584,7 @@ export function MarkerStudio() {
       action: (
         <ToastAction
           altText="Вернуть удалённую метку"
-          onClick={() => setHistory((prev) => [item, ...prev])}
+          onClick={() => restoreMarker(item)}
         >
           Вернуть
         </ToastAction>
@@ -472,8 +594,10 @@ export function MarkerStudio() {
 
   const clearHistory = (): void => {
     if (history.length === 0) return;
+    historyRef.current = [];
     setHistory([]);
     setConfirmClear(false);
+    void clearMarkers().catch(() => undefined);
     toast({ title: "История очищена", duration: 3000 });
   };
 
@@ -499,9 +623,13 @@ export function MarkerStudio() {
       return;
     }
     const trimmedName = name.trim();
-    const url = `${window.location.origin}${window.location.pathname}?name=${encodeURIComponent(
+    /* Каталог приложения, а не текущий файл: /repo/ на GitHub Pages */
+    const base = new URL(".", window.location.href);
+    const url = `${base.origin}${base.pathname}?name=${encodeURIComponent(
       trimmedName
     )}&size=${printSizeCm}`;
+    rememberMarker({ name: trimmedName, id }, [...design.cells]);
+    pushCloud(trimmedName);
     if (typeof navigator.share === "function") {
       try {
         await navigator.share({
@@ -518,7 +646,6 @@ export function MarkerStudio() {
     }
     try {
       await navigator.clipboard.writeText(url);
-      pushCloud(trimmedName);
       toast({
         title: "Ссылка скопирована",
         description: `Метка «${trimmedName}» откроется готовой к печати.`,
@@ -608,14 +735,14 @@ export function MarkerStudio() {
                 className="h-12 flex-1 rounded-full bg-stone-900 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white dark:hover:shadow-soft"
               >
                 <Download className="size-5" aria-hidden="true" />
-                Скачать PNG
+                Скачать JPG
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => void handlePdf()}
                 disabled={downloadDisabled}
-                title="Скачать PDF: лист A4 с точным размером метки"
+                title="Скачать PDF для печати: лист A4, метка с названием"
                 className="h-12 rounded-full border-transparent bg-stone-100 px-5 text-[15px] font-medium text-stone-700 transition-all hover:bg-stone-200 hover:text-stone-900 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700 dark:hover:text-stone-100"
               >
                 <FileDown className="size-5" aria-hidden="true" />
@@ -633,6 +760,14 @@ export function MarkerStudio() {
                 Поделиться
               </Button>
             </div>
+
+            {/* Назначение форматов — чтобы никто не перепутал */}
+            <p className="rounded-2xl bg-stone-50 px-3 py-2 text-[11px] leading-relaxed text-stone-500 dark:bg-stone-800/50 dark:text-stone-400">
+              <span className="font-medium text-stone-700 dark:text-stone-300">JPG</span> — без названия,
+              2048×2048, для загрузки в Vuforia.{" "}
+              <span className="font-medium text-stone-700 dark:text-stone-300">PDF</span> — с названием,
+              для печати на A4.
+            </p>
 
             {/* Размер печати */}
             <div className="space-y-2">
@@ -733,7 +868,7 @@ export function MarkerStudio() {
                       {
                         icon: Download,
                         title: "Скачайте и распечатайте",
-                        text: "PNG или печать на белой бумаге",
+                        text: "JPG для Vuforia или PDF для печати",
                       },
                     ].map((step) => (
                       <li
@@ -786,7 +921,7 @@ export function MarkerStudio() {
                     ? `${cloud.items.length} меток в облаке — обновить список`
                     : cloud.status === "error"
                       ? "Облако недоступно — попробовать снова"
-                      : "История хранится в этом браузере. Подключение Supabase (см. HOSTING.md) включит синхронизацию между устройствами"
+                      : "История хранится в браузерной БД (IndexedDB). Подключение Supabase (см. HOSTING.md) включит синхронизацию между устройствами"
                 }
                 className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-300/50 dark:focus-visible:ring-stone-600/50"
               >
@@ -851,7 +986,7 @@ export function MarkerStudio() {
                       </AlertDialogTitle>
                       <AlertDialogDescription className="text-stone-500 dark:text-stone-400">
                         Все сохранённые метки ({history.length}) пропадут из списка.
-                        Скачанные PNG-файлы это не затронет.
+                        Скачанные JPG и PDF это не затронет.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -889,7 +1024,15 @@ export function MarkerStudio() {
                 />
               </div>
             )}
-            {history.length === 0 && cloudOnlyItems.length === 0 ? (
+            {dbLoading ? (
+              /* Пока IndexedDB открывается, не показываем ложное «пусто» */
+              <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center dark:border-stone-800 dark:bg-stone-800/40">
+                <Shapes className="size-6 animate-pulse text-stone-300 dark:text-stone-600" aria-hidden="true" />
+                <p className="max-w-[230px] text-xs leading-relaxed text-stone-500 dark:text-stone-400">
+                  Загружаем историю из браузерной БД…
+                </p>
+              </div>
+            ) : history.length === 0 && cloudOnlyItems.length === 0 ? (
               /* Тихая центрированная подсказка вместо большой пустой коробки */
               <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-[20px] border border-dashed border-stone-200 bg-stone-50/60 px-4 py-6 text-center dark:border-stone-800 dark:bg-stone-800/40">
                 <Shapes className="size-6 text-stone-300 dark:text-stone-600" aria-hidden="true" />
@@ -908,7 +1051,7 @@ export function MarkerStudio() {
             ) : (
               <ul className="flex list-none flex-col gap-3 lg:max-h-[65vh] lg:overflow-y-auto lg:overscroll-contain lg:pr-1.5">
                 {filteredHistory.map((item, i) => (
-                  <li key={item.ts}>
+                  <li key={item.id}>
                     <HistoryCard
                       item={item}
                       index={i}
@@ -919,7 +1062,7 @@ export function MarkerStudio() {
                   </li>
                 ))}
                 {filteredCloud.map((item, i) => (
-                  <li key={`cloud-${item.ts}`}>
+                  <li key={`cloud-${item.id}`}>
                     <HistoryCard
                       item={item}
                       index={filteredHistory.length + i}
@@ -945,6 +1088,12 @@ export function MarkerStudio() {
                 </span>
               </span>
               <span aria-live="polite">Занято: {history.length + cloudOnlyItems.length}</span>
+              <span
+                title="Где сейчас хранится история: IndexedDB — основная БД браузера, localStorage — запасное хранилище, память — крайний случай"
+                className="text-stone-300 dark:text-stone-600"
+              >
+                БД: {dbLoading ? "…" : storageLabel(dbMode)}
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -996,7 +1145,7 @@ export function MarkerStudio() {
               className="h-11 rounded-full bg-stone-900 px-6 text-[15px] font-semibold text-white shadow-soft-sm transition-all hover:bg-stone-700 hover:shadow-soft active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
             >
               <Download className="size-5" aria-hidden="true" />
-              Скачать PNG
+              Скачать JPG
             </Button>
           </DialogFooter>
         </DialogContent>

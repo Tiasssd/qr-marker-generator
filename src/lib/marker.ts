@@ -192,6 +192,20 @@ const FALLBACK: Bits = [
 ];
 
 /**
+ * Восстанавливает узор из сохранённого в БД набора тёмных ячеек.
+ * Нужен, чтобы метка из истории рендерилась ровно такой, какой была
+ * сгенерирована, даже если движок узора когда-нибудь изменится.
+ */
+export function designFromCells(cells: readonly number[]): MarkerDesign | null {
+  if (!Array.isArray(cells) || cells.length === 0) return null;
+  const set = new Set<number>();
+  for (const cell of cells) {
+    if (Number.isInteger(cell) && cell >= 0 && cell < GRID * GRID) set.add(cell);
+  }
+  return set.size > 0 ? { grid: GRID, cells: set } : null;
+}
+
+/**
  * Строит узор метки из ID. Одно и то же название — всегда один и тот же узор.
  */
 export function createMarkerDesign(id: string): MarkerDesign | null {
@@ -274,9 +288,11 @@ export function drawMarker(
 
   /* Компактная вёрстка: тонкие поля — метка крупнее */
   const margin = size * 0.025;
-  const gap = size * 0.03;
   const nameText = name.trim();
   const hasName = nameText.length > 0;
+  /* Без названия карточка — ровный квадрат: ни лишнего зазора,
+     ни полосы над меткой. Именно этот вариант уходит в Vuforia. */
+  const gap = hasName ? size * 0.03 : 0;
 
   /* --- подбор размера шрифта названия --- */
   const sans = sansStack();
@@ -376,33 +392,103 @@ export function drawMarker(
 
 /* ------------------------------- Экспорт --------------------------------- */
 
-/** Рендерит метку в PNG-Blob с заданным разрешением */
+/** Canvas → Blob с фолбэком для браузеров без toBlob */
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality?: number
+): Promise<Blob> {
+  if (typeof canvas.toBlob !== "function") {
+    try {
+      const dataUrl = canvas.toDataURL(type, quality);
+      return Promise.resolve(dataUrlToBlob(dataUrl));
+    } catch {
+      return Promise.reject(new Error("Браузер не умеет экспортировать canvas"));
+    }
+  }
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+        /* Некоторые браузеры возвращают null на больших canvas —
+           пробуем тот же формат через data-URL */
+        try {
+          resolve(dataUrlToBlob(canvas.toDataURL(type, quality)));
+        } catch (err) {
+          reject(err);
+        }
+      },
+      type,
+      quality
+    );
+  });
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(",");
+  const meta = dataUrl.slice(0, comma);
+  const body = dataUrl.slice(comma + 1);
+  const mime = /data:([^;]+)/.exec(meta)?.[1] ?? "application/octet-stream";
+  if (meta.includes(";base64")) {
+    const binary = atob(body);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  }
+  return new Blob([decodeURIComponent(body)], { type: mime });
+}
+
+/**
+ * Рендерит метку в JPEG-Blob.
+ *
+ * JPEG здесь не случайность: Vuforia отклоняет PNG «неподдерживаемый тип
+ * цвета» (альфа-канал / нестандартный профиль). Canvas залит непрозрачным
+ * белым, а JPEG всегда кодируется как 8-битный RGB без прозрачности —
+ * такой файл Vuforia принимает без ручной конвертации.
+ */
+export async function exportMarkerJpeg(
+  design: MarkerDesign,
+  params: DrawParams,
+  quality = 0.95
+): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  drawMarker(canvas, design, { ...params, dpr: 1 });
+  return canvasToBlob(canvas, "image/jpeg", quality);
+}
+
+/** PNG-экспорт (оставлен для печати/совместимости) */
 export async function exportMarkerPng(
   design: MarkerDesign,
   params: DrawParams
 ): Promise<Blob> {
   const canvas = document.createElement("canvas");
   drawMarker(canvas, design, { ...params, dpr: 1 });
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) resolve(blob);
-        else reject(new Error("Не удалось создать PNG-файл"));
-      },
-      "image/png"
-    );
-  });
+  return canvasToBlob(canvas, "image/png");
 }
 
-/** Рендерит метку в data-URL (для листа печати) */
+/** Рендерит метку в PNG data-URL (для совместимости) */
 export function renderMarkerDataUrl(design: MarkerDesign, params: DrawParams): string {
   const canvas = document.createElement("canvas");
   drawMarker(canvas, design, { ...params, dpr: 1 });
   return canvas.toDataURL("image/png");
 }
 
-/** Безопасное имя файла для скачивания (PNG по умолчанию, PDF для листа) */
-export function markerFileName(name: string, id: string, ext: "png" | "pdf" = "png"): string {
+/** Рендерит метку в JPEG data-URL (вставляется в PDF для печати) */
+export function renderMarkerJpegDataUrl(
+  design: MarkerDesign,
+  params: DrawParams,
+  quality = 0.95
+): string {
+  const canvas = document.createElement("canvas");
+  drawMarker(canvas, design, { ...params, dpr: 1 });
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+/** Безопасное имя файла для скачивания (JPG для Vuforia, PDF для печати) */
+export function markerFileName(name: string, id: string, ext: "png" | "jpg" | "pdf" = "jpg"): string {
   const base =
     name
       .trim()
