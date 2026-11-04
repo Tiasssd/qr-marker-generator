@@ -1000,7 +1000,7 @@ export function MarkerStudio() {
                     key={cm}
                     value={String(cm)}
                     aria-label={`${cm} сантиметров`}
-                    className="h-10 min-w-0 flex-1 select-none rounded-full border-0 bg-transparent px-3 text-sm font-medium text-stone-500 shadow-none transition-[background-color,color,box-shadow] duration-200 hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:font-semibold data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white dark:text-stone-400 dark:hover:text-stone-200 dark:data-[state=on]:bg-stone-200 dark:data-[state=on]:text-stone-900 dark:data-[state=on]:hover:bg-stone-200"
+                    className="h-10 min-w-0 flex-1 select-none rounded-full border-0 bg-transparent px-3 text-sm font-medium text-stone-500 shadow-none hover:bg-transparent hover:text-stone-700 data-[state=on]:bg-white data-[state=on]:font-semibold data-[state=on]:text-stone-900 data-[state=on]:shadow-soft-sm data-[state=on]:hover:bg-white dark:text-stone-400 dark:hover:text-stone-200 dark:data-[state=on]:bg-stone-200 dark:data-[state=on]:text-stone-900 dark:data-[state=on]:hover:bg-stone-200"
                   >
                     {cm} см
                   </ToggleGroupItem>
