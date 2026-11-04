@@ -1,0 +1,5 @@
+:HL["/qr-marker-generator/_next/static/chunks/361w87mea3yxc.css","style"]
+:HL["/qr-marker-generator/_next/static/chunks/38w26m90j9psc.css","style"]
+2:[["children",{"s":"__PAGE__","h":160}]]
+1:[["children",{"s":"/_not-found","h":96,"c":"$Q2"}]]
+0:{"b":"5on0vBSv0XmZWGHO2MYiY","t":{"t":{"s":"","h":80,"c":"$Q1"}}}
