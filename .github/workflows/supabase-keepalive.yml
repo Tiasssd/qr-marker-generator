@@ -1,0 +1,76 @@
+name: Supabase keep-alive
+
+# Бесплатный проект Supabase засыпает после ~7 дней без запросов к БД.
+# Этот workflow раз в 6 часов делает один дешёвый запрос к таблице markers,
+# поэтому проект считается активным и не ставится на паузу.
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Ping Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          set -u
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::Не заданы секреты NEXT_PUBLIC_SUPABASE_URL и/или NEXT_PUBLIC_SUPABASE_ANON_KEY."
+            exit 1
+          fi
+
+          base="${SUPABASE_URL%/}"
+          base="${base%/rest/v1}"
+
+          code=$(curl -sS --max-time 25 -o /tmp/ping.json -w '%{http_code}' \
+            "$base/rest/v1/markers?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" || true)
+
+          echo "HTTP $code"
+          if [ "$code" = "200" ]; then
+            echo "База отвечает — проект активен."
+            exit 0
+          fi
+
+          echo "Ответ Supabase:"
+          head -c 500 /tmp/ping.json 2>/dev/null || true
+          echo
+          echo "::error::База не ответила (HTTP $code). Проверьте статус проекта в Supabase Dashboard."
+          exit 1
+
+      # GitHub отключает schedule в публичном репозитории после 60 дней
+      # без коммитов. Пустой коммит раз в 30 дней не даёт этому случиться.
+      - name: Keep the schedule enabled
+        if: always() && github.event_name == 'schedule'
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          days=$(( (now - last) / 86400 ))
+          echo "Последний коммит: $days дн. назад"
+          if [ "$days" -lt 30 ]; then
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keep scheduled workflows alive"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
